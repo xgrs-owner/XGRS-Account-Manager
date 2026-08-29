@@ -15,6 +15,7 @@ ENV/
 build/
 dist/
 *.spec
+!packaging/RobloxAccountManager.spec
 *.spec.log
 
 # Account data (SENSITIVE - DO NOT COMMIT!)
@@ -38,6 +39,9 @@ desktop.ini
 *.tmp
 temp/
 tmp/
+
+# uv
+*.egg-info/
 
 # Testing
 .pytest_cache/

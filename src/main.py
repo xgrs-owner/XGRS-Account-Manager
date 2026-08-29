@@ -28,7 +28,7 @@ def resolve_icon_path() -> str | None:
     icon_path = os.path.join(DATA_FOLDER, "icon.ico")
     if os.path.exists(icon_path):
         return icon_path
-    root_icon = get_resource_path("icon.ico")
+    root_icon = get_resource_path("assets", "icon.ico")
     if os.path.exists(root_icon):
         return root_icon
     return None

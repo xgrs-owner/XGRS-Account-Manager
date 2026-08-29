@@ -50,7 +50,7 @@ def _get_launch_details() -> OperationResult:
         working_directory = os.path.dirname(target)
     else:
         target = os.path.abspath(sys.executable)
-        main_path = os.path.join(get_app_dir(), "main.py")
+        main_path = os.path.join(get_app_dir(), "src", "main.py")
         arguments = f'"{main_path}"'
         working_directory = get_app_dir()
 
@@ -72,7 +72,7 @@ def _get_launch_details() -> OperationResult:
 
     icon_candidates = [
         os.path.join(get_data_dir(), "icon.ico"),
-        get_resource_path("icon.ico"),
+        get_resource_path("assets", "icon.ico"),
     ]
     icon_path = next(
         (path for path in icon_candidates if path and os.path.isfile(path)),

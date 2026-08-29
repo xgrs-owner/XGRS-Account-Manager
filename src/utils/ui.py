@@ -587,7 +587,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         for candidate in [
             os.path.join(get_data_dir(), "icon.ico"),
             icon_path,
-            get_resource_path("icon.ico"),
+            get_resource_path("assets", "icon.ico"),
         ]:
             if candidate and os.path.exists(candidate):
                 self._icon_path = candidate
@@ -5486,7 +5486,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         _discord_path = os.path.join(get_data_dir(), "discordlogo.png")
         if not os.path.exists(_discord_path):
-            _discord_path = get_resource_path("discordlogo.png")
+            _discord_path = get_resource_path("assets", "discordlogo.png")
         discord_btn = QPushButton()
         discord_btn.setObjectName("discordBtn")
         discord_btn.setFixedSize(18, 18)
@@ -7817,7 +7817,7 @@ def main(icon_path: str | None = None) -> int:
     if not icon_path or not os.path.exists(icon_path):
         icon_path = os.path.join(get_data_dir(), "icon.ico")
         if not os.path.exists(icon_path):
-            _alt = get_resource_path("icon.ico")
+            _alt = get_resource_path("assets", "icon.ico")
             icon_path = _alt if os.path.exists(_alt) else None
 
     if icon_path and os.path.exists(icon_path):

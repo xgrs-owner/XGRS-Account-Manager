@@ -23,41 +23,24 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          python-version: "3.14"
+          version: "0.12.7"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
-      - name: Install dependencies
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Sync dependencies
         run: |
-          py -m pip install --upgrade pip
-          py -m pip install -r requirements.txt
+          uv sync --locked --group build
 
       - name: Build with PyInstaller
-        run: |
-          py -m PyInstaller ^
-            --noconfirm ^
-            --onefile ^
-            --noconsole ^
-            --name RobloxAccountManager ^
-            --icon=icon.ico ^
-            --version-file=version_info.txt ^
-            --add-data "classes;classes" ^
-            --add-data "utils;utils" ^
-            --add-data "icon.ico;." ^
-            --add-data "discordlogo.png;." ^
-            --collect-binaries autoit ^
-            --collect-all selenium ^
-            --hidden-import webdriver_manager ^
-            --hidden-import requests ^
-            --hidden-import Crypto ^
-            --hidden-import win32event ^
-            --hidden-import win32api ^
-            --hidden-import msvcrt ^
-            --hidden-import psutil ^
-            --hidden-import websockets ^
-            main.py
-        shell: cmd
+        run: uv run --no-sync python scripts/build.py
+        env:
+          RAM_RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Verify build output
         run: |
