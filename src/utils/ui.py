@@ -3154,7 +3154,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         ws_docs_btn = QPushButton("Read Documentation")
         ws_docs_btn.clicked.connect(
-            lambda: webbrowser.open("https://evanovars-roblox-account-manager.gitbook.io/evanovars-ram")
+            lambda: webbrowser.open("https://https://www.evanovarram.com/documentation/developer")
         )
         f.addWidget(ws_docs_btn)
 
