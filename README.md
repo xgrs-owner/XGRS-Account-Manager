@@ -4,7 +4,7 @@
 [![Discord](https://img.shields.io/discord/1436930121897476140?label=Discord)](https://discord.gg/SZaZU8zwZA)
 [![Website](https://img.shields.io/badge/website-evanovarram.com-1F58FF)](https://www.evanovarram.com/)
 ![OS](https://img.shields.io/badge/os-windows-0078D4)<br>
-[![Download](https://img.shields.io/badge/Download-280ab?style=for-the-badge)](https://github.com/evanovar/RobloxAccountManager/releases/latest/download/RobloxAccountManager.exe)
+[![Download](https://img.shields.io/badge/Download-280ab?style=for-the-badge)](https://github.com/evanovar/RobloxAccountManager/releases/latest)
 
 > [!IMPORTANT]
 > Before you see this as a **"Virus"** or **"Unofficial,"** please read:
@@ -48,7 +48,7 @@ Evanovar RAM is an open source Windows desktop application for organizing Roblox
 ### Windows executable
 
 1. Open the [latest release](https://github.com/evanovar/RobloxAccountManager/releases/latest).
-2. Download `RobloxAccountManager.exe`.
+2. Download `EvanovarRAM-v<version>.exe`.
 3. Place it in a folder where the application can keep its local data.
 4. Run the executable.
 
@@ -182,7 +182,7 @@ uv sync --locked --group build
 uv run --no-sync python scripts/build.py
 ```
 
-The executable is written to `dist/RobloxAccountManager.exe`. Build configuration lives in `packaging/RobloxAccountManager.spec`, and version metadata is generated during the build.
+The executable is written to `dist/EvanovarRAM.exe`. Build configuration lives in `packaging/EvanovarRAM.spec`, and version metadata is generated during the build. Release builds also create `dist/EvanovarRAM-v<version>.exe` for GitHub Releases.
 
 `src/utils/version.py` is the single source of truth for the application version. Release tags must match `APP_VERSION`.
 

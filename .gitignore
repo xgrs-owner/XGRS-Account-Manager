@@ -15,7 +15,7 @@ ENV/
 build/
 dist/
 *.spec
-!packaging/RobloxAccountManager.spec
+!packaging/EvanovarRAM.spec
 *.spec.log
 
 # Account data (SENSITIVE - DO NOT COMMIT!)

@@ -21,7 +21,14 @@ from utils.app_paths import get_data_dir
 
 GITHUB_API = "https://api.github.com/repos/evanovar/RobloxAccountManager/releases/latest"
 RELEASES_PAGE = "https://github.com/evanovar/RobloxAccountManager/releases/latest"
-PREFERRED_ASSET_NAME = "RobloxAccountManager.exe"
+RELEASE_ASSET_PATTERN = re.compile(
+    r"^EvanovarRAM-v\d+\.\d+\.\d+(?:\.\d+)?\.exe$",
+    re.IGNORECASE,
+)
+LEGACY_ASSET_NAMES = (
+    "EvanovarRAM.exe",
+    "RobloxAccountManager.exe",
+)
 PROCESS_WAIT_SECONDS = 120
 REPLACE_WAIT_SECONDS = 30
 
@@ -57,17 +64,23 @@ def get_exe_download_url() -> tuple[str, str] | None:
     try:
         response = requests.get(GITHUB_API, timeout=8)
         response.raise_for_status()
+        release = response.json()
         assets = [
             asset
-            for asset in response.json().get("assets", [])
+            for asset in release.get("assets", [])
             if str(asset.get("name", "")).lower().endswith(".exe")
             and asset.get("browser_download_url")
         ]
+        release_tag = str(release.get("tag_name", "")).strip()
+        if release_tag and not release_tag.lower().startswith("v"):
+            release_tag = f"v{release_tag}"
+        expected_name = f"EvanovarRAM-{release_tag}.exe" if release_tag else ""
         preferred = next(
             (
                 asset
                 for asset in assets
-                if asset["name"].lower() == PREFERRED_ASSET_NAME.lower()
+                if expected_name
+                and asset["name"].lower() == expected_name.lower()
             ),
             None,
         )
@@ -75,7 +88,16 @@ def get_exe_download_url() -> tuple[str, str] | None:
             (
                 asset
                 for asset in assets
-                if "robloxaccountmanager" in asset["name"].lower()
+                if RELEASE_ASSET_PATTERN.fullmatch(asset["name"])
+            ),
+            None,
+        )
+        selected = selected or next(
+            (
+                asset
+                for asset in assets
+                if asset["name"].lower()
+                in {name.lower() for name in LEGACY_ASSET_NAMES}
             ),
             None,
         )
@@ -226,7 +248,7 @@ def download_update(
             on_progress(0)
             result = get_exe_download_url()
             if not result:
-                on_done(False, "No Roblox Account Manager executable was found in the latest release.")
+                on_done(False, "No Evanovar RAM executable was found in the latest release.")
                 return
 
             url, filename = result
