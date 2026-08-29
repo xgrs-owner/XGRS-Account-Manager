@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/github/license/evanovar/RobloxAccountManager)](LICENSE)
 [![Discord](https://img.shields.io/discord/1436930121897476140?label=Discord)](https://discord.gg/SZaZU8zwZA)
 [![Website](https://img.shields.io/badge/website-evanovarram.com-1F58FF)](https://www.evanovarram.com/)
-![OS](https://img.shields.io/badge/os-windows-0078D4)
+![OS](https://img.shields.io/badge/os-windows-0078D4)<br>
 [![Download](https://img.shields.io/badge/Download-280ab?style=for-the-badge)](https://github.com/evanovar/RobloxAccountManager/releases/latest/download/RobloxAccountManager.exe)
 
 > [!IMPORTANT]
