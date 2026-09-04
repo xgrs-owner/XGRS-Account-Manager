@@ -86,6 +86,9 @@ _ICON_BODIES: dict[str, str] = {
     "developer": (
         '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'
     ),
+    "themes": (
+        '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>'
+    ),
     "search": (
         '<circle cx="11" cy="11" r="8"/>'
         '<line x1="21" y1="21" x2="16.65" y2="16.65"/>'

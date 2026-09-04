@@ -67,6 +67,7 @@ XGRS Manager.exe
 .github_token
 *.ps1
 *.bat
+assets/icon_square.ico
 
 # Upstream sources kept for merging
 new*.*.*/

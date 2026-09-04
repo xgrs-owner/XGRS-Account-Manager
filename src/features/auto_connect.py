@@ -426,12 +426,79 @@ def fetch_presence_batch(user_ids: list[str], cookie: str) -> dict[str, dict]:
 def kill_pid(pid: int) -> None:
     try:
         subprocess.run(
-            ["taskkill", "/F", "/PID", str(pid)],
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+ROBLOX_PROCESS_NAMES = {
+    "robloxplayerbeta.exe",
+    "robloxplayerlauncher.exe",
+    "robloxcrashhandler.exe",
+    "robloxstudiobeta.exe",
+}
+
+BOOTSTRAPPER_NAMES = {
+    "bloxstrap.exe",
+    "fishstrap.exe",
+    "roblox.exe",
+    "robloxplayerinstaller.exe",
+}
+
+
+def get_configured_launcher_names() -> set[str]:
+    names: set[str] = set()
+    try:
+        settings = actions.load_ui_settings()
+    except Exception:
+        return names
+    path = str(settings.get("custom_roblox_launcher_path", "") or "").strip()
+    if path:
+        names.add(os.path.basename(path).lower())
+    return names
+
+
+def close_all_roblox(include_bootstrapper: bool = True) -> int:
+    targets = set(ROBLOX_PROCESS_NAMES)
+    if include_bootstrapper:
+        targets |= BOOTSTRAPPER_NAMES | get_configured_launcher_names()
+
+    victims: list[int] = []
+    for process in psutil.process_iter(["pid", "name"]):
+        try:
+            name = (process.info.get("name") or "").lower()
+        except (psutil.Error, OSError):
+            continue
+        if name in targets:
+            victims.append(int(process.info["pid"]))
+
+    for pid in victims:
+        kill_pid(pid)
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        still_running = []
+        for pid in victims:
+            try:
+                if psutil.Process(pid).is_running():
+                    still_running.append(pid)
+            except (psutil.Error, OSError):
+                continue
+        if not still_running:
+            break
+        time.sleep(0.25)
+        for pid in still_running:
+            try:
+                psutil.Process(pid).kill()
+            except (psutil.Error, OSError):
+                pass
+
+    presence_mod.get_roblox_processes(force=True)
+    return len(victims)
 
 
 class _AccountState:
@@ -579,17 +646,36 @@ class AutoConnectSupervisor:
         self.start()
 
     def disable_account(self, account: str, close_client: bool = False) -> None:
-        pid = None
         with self._lock:
             state = self._states.get(account)
             if state is None:
                 return
             state.enabled = False
             state.launching = False
+            user_id = state.user_id
             pid = state.pid
             self._set_state(state, STATE_STOPPED, time.time())
-        if close_client and pid:
-            kill_pid(pid)
+
+        if close_client:
+            killed = 0
+            for cached_pid, (_, cached_uid) in list(self._pid_uid_cache.items()):
+                if user_id and cached_uid == user_id:
+                    kill_pid(cached_pid)
+                    self._pid_uid_cache.pop(cached_pid, None)
+                    killed += 1
+            if not killed and pid:
+                kill_pid(pid)
+                killed = 1
+            with self._lock:
+                if state is not None:
+                    state.pid = None
+                    state.in_game = False
+                    state.ram_mb = 0.0
+                    state.cpu_percent = 0.0
+                    state.ping_ms = None
+            if killed:
+                print(f"[Auto Connect] [{account}] Closed {killed} client(s).")
+
         if not self.has_enabled_accounts():
             self.stop(join_timeout=0.5)
 
@@ -610,11 +696,30 @@ class AutoConnectSupervisor:
             self.enable_account(account)
         return len(accounts)
 
-    def disable_all(self, close_clients: bool = False) -> None:
+    def disable_all(self, close_clients: bool = False) -> int:
         with self._lock:
             accounts = list(self._states)
         for account in accounts:
-            self.disable_account(account, close_client=close_clients)
+            self.disable_account(account, close_client=False)
+
+        if not close_clients:
+            return 0
+
+        closed = close_all_roblox()
+        self._pid_uid_cache.clear()
+        with self._lock:
+            for state in self._states.values():
+                state.pid = None
+                state.in_game = False
+                state.ram_mb = 0.0
+                state.cpu_percent = 0.0
+                state.ping_ms = None
+                state.log_path = None
+                state.log_offset = 0
+                state.log_pid = None
+                state.running_since = 0.0
+        print(f"[Auto Connect] Stop All closed {closed} Roblox process(es).")
+        return closed
 
     def restart_account(self, account: str) -> None:
         """Force-close the client of this account and start it again."""

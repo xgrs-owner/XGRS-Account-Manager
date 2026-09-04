@@ -27,13 +27,18 @@ Sends key presses to every Roblox window on a timer so accounts are not kicked.
 Runs several Roblox clients side by side, with a window grid hotkey and a headless
 mode that hides client windows.
 
+**Themes**
+Eight built-in palettes (Midnight, Carbon, Nord, Dracula, Ocean, Crimson, Forest,
+Light) plus a colour picker for every interface role, saved between runs.
+
 **Settings**
-Searchable, grouped into General, Roblox, Discord, Misc and Developer. Includes a
-Roblox downloader, RAM trimming, Discord webhook alerts and a WebSocket API.
+Searchable, grouped into General, Roblox, Discord, Misc, Themes and Developer.
+Includes a Roblox downloader, RAM trimming, Discord webhook alerts and a
+WebSocket API.
 
 ## Install
 
-Download the latest `XGRSAccountManager-vX.Y.Z.exe` from
+Download the latest `XGRS Manager-vX.Y.Z.exe` from
 [Releases](https://github.com/xgrs-owner/XGRS-Account-Manager/releases), put it in
 its own folder and run it. No Python needed.
 

@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QPushButton, QRadioButton, QScrollArea,
+    QColorDialog, QMessageBox, QPushButton, QRadioButton, QScrollArea,
     QSizePolicy, QDoubleSpinBox, QSlider, QSpinBox, QStackedWidget, QSystemTrayIcon,
     QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem,
     QToolButton, QVBoxLayout, QWidget,
@@ -71,6 +71,7 @@ import features.headless_manager as headless_manager_mod
 import features.presence as presence_mod
 import features.roblox_downloader as roblox_downloader_mod
 import features.roblox_settings as roblox_settings_mod
+import features.themes as themes_mod
 import features.updater as updater_mod
 import features.webhook as webhook
 import features.websocket_server as ws_mod
@@ -480,15 +481,30 @@ class _Bridge(QObject):
     console_wakeup = Signal()
 
 
-BG = "#0E0E0E"
-PANEL = "#151515"
-INPUT = "#1A1A1A"
-TEXT = "#EDEDED"
-MUTED = "#AAAAAA"
-LINE = "#242424"
-SELECT = "#2A2A2A"
-NOTE = "#D6BB7D"
-FG_ACCENT = "#0078D7"
+PALETTE = themes_mod.get_palette()
+BG = PALETTE["bg"]
+PANEL = PALETTE["panel"]
+INPUT = PALETTE["input"]
+TEXT = PALETTE["text"]
+MUTED = PALETTE["muted"]
+LINE = PALETTE["line"]
+SELECT = PALETTE["select"]
+NOTE = PALETTE["note"]
+FG_ACCENT = PALETTE["accent"]
+
+
+def use_palette(palette: dict) -> None:
+    global PALETTE, BG, PANEL, INPUT, TEXT, MUTED, LINE, SELECT, NOTE, FG_ACCENT
+    PALETTE = dict(palette)
+    BG = PALETTE["bg"]
+    PANEL = PALETTE["panel"]
+    INPUT = PALETTE["input"]
+    TEXT = PALETTE["text"]
+    MUTED = PALETTE["muted"]
+    LINE = PALETTE["line"]
+    SELECT = PALETTE["select"]
+    NOTE = PALETTE["note"]
+    FG_ACCENT = PALETTE["accent"]
 
 _dropdown_arrow_cache: dict[str, str] = {}
 
@@ -1162,6 +1178,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         min_btn = QPushButton()
         min_btn.setObjectName("titleButton")
+        min_btn.setProperty("vectorIcon", "minimize")
         min_btn.setIcon(icons_mod.get_icon("minimize", MUTED, 12, 1.6))
         min_btn.setIconSize(icon_size)
         min_btn.setToolTip("Minimize")
@@ -1177,6 +1194,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         close_btn = QPushButton()
         close_btn.setObjectName("closeButton")
+        close_btn.setProperty("vectorIcon", "close")
         close_btn.setIcon(icons_mod.get_icon("close", MUTED, 12, 1.8))
         close_btn.setIconSize(icon_size)
         close_btn.setToolTip("Close")
@@ -1276,6 +1294,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         btn.setCheckable(True)
         btn.setAutoExclusive(True)
         btn.setIconSize(QSize(size, size))
+        btn.setProperty("vectorIcon", icon_name)
         btn.toggled.connect(
             lambda checked, button=btn, name=icon_name: button.setIcon(
                 icons_mod.get_icon(name, TEXT if checked else MUTED, size)
@@ -2383,6 +2402,210 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         threading.Thread(target=_thread, daemon=True).start()
 
+    def _build_theme_page(self, form, section) -> None:
+        self._theme_preset_buttons = {}
+        self._theme_color_swatches = {}
+        self._theme_color_edits = {}
+
+        form.addWidget(section("PRESETS"))
+        for name in themes_mod.get_preset_names():
+            form.addWidget(self._build_theme_preset_button(name))
+
+        form.addWidget(section("COLORS"))
+        hint = QLabel(
+            "Click a swatch to pick a colour, or type a hex value. "
+            "Choosing a preset clears custom colours."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        form.addWidget(hint)
+
+        palette = themes_mod.get_palette()
+        for key in themes_mod.COLOR_KEYS:
+            form.addLayout(self._build_theme_color_row(key, palette[key]))
+
+        form.addWidget(section("APPLY"))
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+
+        reset_btn = QPushButton("Reset Colors")
+        reset_btn.setToolTip("Drop every custom colour and go back to the preset.")
+        reset_btn.clicked.connect(self._on_theme_reset)
+        buttons.addWidget(reset_btn)
+
+        restart_btn = QPushButton("Restart App")
+        restart_btn.setToolTip(
+            "A restart repaints every screen. Without it only the shared "
+            "styling updates immediately."
+        )
+        restart_btn.clicked.connect(self._on_theme_restart)
+        buttons.addWidget(restart_btn)
+        form.addLayout(buttons)
+
+        form.addStretch(1)
+        self._refresh_theme_preset_buttons()
+
+    def _build_theme_preset_button(self, name: str) -> QPushButton:
+        palette = themes_mod.get_preset_palette(name)
+        button = QPushButton()
+        button.setCheckable(True)
+        button.setAutoExclusive(False)
+        button.setFixedHeight(36)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(
+            f"QPushButton {{ background: {palette['bg']};"
+            f" border: 1px solid {palette['line']}; border-radius: 5px; }}"
+            f"QPushButton:checked {{ border: 2px solid {palette['accent']}; }}"
+            f"QPushButton:hover {{ border: 1px solid {palette['accent']}; }}"
+        )
+
+        row = QHBoxLayout(button)
+        row.setContentsMargins(10, 0, 10, 0)
+        row.setSpacing(5)
+
+        title = QLabel(name)
+        title.setStyleSheet(
+            f"color: {palette['text']}; font-size: 11px;"
+            f" font-weight: 700; background: transparent; border: none;"
+        )
+        row.addWidget(title)
+        row.addStretch(1)
+
+        for key in ("accent", "note", "select", "input", "text"):
+            swatch = QLabel()
+            swatch.setFixedSize(14, 14)
+            swatch.setStyleSheet(
+                f"background: {palette[key]}; border-radius: 7px;"
+                f" border: 1px solid {palette['line']};"
+            )
+            row.addWidget(swatch)
+
+        button.clicked.connect(lambda _=False, preset=name: self._on_theme_preset(preset))
+        self._theme_preset_buttons[name] = button
+        return button
+
+    def _build_theme_color_row(self, key: str, value: str) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        label = QLabel(themes_mod.COLOR_LABELS[key])
+        label.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        label.setMinimumWidth(110)
+        row.addWidget(label)
+        row.addStretch(1)
+
+        edit = QLineEdit(value)
+        edit.setMaxLength(7)
+        edit.setFixedWidth(76)
+        edit.setStyleSheet(
+            f"QLineEdit {{ background: {INPUT}; border: 1px solid {LINE};"
+            f" color: {TEXT}; padding: 2px 5px; font-size: 11px; }}"
+        )
+        edit.editingFinished.connect(
+            lambda field=key, widget=edit: self._on_theme_color_typed(field, widget)
+        )
+        row.addWidget(edit)
+        self._theme_color_edits[key] = edit
+
+        swatch = QPushButton()
+        swatch.setFixedSize(24, 22)
+        swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        swatch.clicked.connect(lambda _=False, field=key: self._on_theme_color_pick(field))
+        row.addWidget(swatch)
+        self._theme_color_swatches[key] = swatch
+        self._paint_theme_swatch(key, value)
+        return row
+
+    def _paint_theme_swatch(self, key: str, value: str) -> None:
+        swatch = self._theme_color_swatches.get(key)
+        if swatch is None:
+            return
+        swatch.setStyleSheet(
+            f"QPushButton {{ background: {value}; border: 1px solid {LINE};"
+            f" border-radius: 3px; }}"
+            f"QPushButton:hover {{ border: 1px solid {FG_ACCENT}; }}"
+        )
+
+    def _refresh_theme_preset_buttons(self) -> None:
+        active = themes_mod.load_state().get("preset", themes_mod.DEFAULT_PRESET)
+        for name, button in getattr(self, "_theme_preset_buttons", {}).items():
+            button.setChecked(name == active)
+
+    def _refresh_theme_inputs(self, palette: dict) -> None:
+        for key, value in palette.items():
+            edit = getattr(self, "_theme_color_edits", {}).get(key)
+            if edit is not None and edit.text().strip().upper() != value:
+                edit.setText(value)
+            self._paint_theme_swatch(key, value)
+
+    def _apply_theme(self, palette: dict) -> None:
+        use_palette(palette)
+        self._apply_stylesheet()
+        self._refresh_vector_icons()
+        self._refresh_theme_inputs(palette)
+        self._refresh_theme_preset_buttons()
+
+    def _refresh_vector_icons(self) -> None:
+        size = self._NAV_ICON_SIZE
+        for button in self.findChildren(QPushButton):
+            name = button.property("vectorIcon")
+            if not name:
+                continue
+            if name in ("minimize", "maximize", "restore", "close"):
+                button.setIcon(icons_mod.get_icon(name, MUTED, 12, 1.6))
+                continue
+            color = TEXT if button.isChecked() else MUTED
+            button.setIcon(icons_mod.get_icon(name, color, size))
+
+    def _on_theme_preset(self, name: str) -> None:
+        self._apply_theme(themes_mod.set_preset(name))
+        print(f"[INFO] Theme preset applied: {name}")
+
+    def _on_theme_color_typed(self, key: str, widget: QLineEdit) -> None:
+        value = widget.text().strip()
+        if not themes_mod.is_valid_color(value):
+            widget.setText(themes_mod.get_palette()[key])
+            return
+        self._apply_theme(themes_mod.set_color(key, value))
+
+    def _on_theme_color_pick(self, key: str) -> None:
+        current = themes_mod.get_palette()[key]
+        chosen = QColorDialog.getColor(QColor(current), self, themes_mod.COLOR_LABELS[key])
+        if not chosen.isValid():
+            return
+        self._apply_theme(themes_mod.set_color(key, chosen.name()))
+
+    def _on_theme_reset(self) -> None:
+        self._apply_theme(themes_mod.reset_custom())
+
+    def _on_theme_restart(self) -> None:
+        reply = QMessageBox.question(
+            self, "Restart Application",
+            "Restart now so the theme is applied everywhere?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._restart_application()
+
+    def _restart_application(self) -> None:
+        try:
+            if getattr(sys, "frozen", False):
+                command = [sys.executable]
+            else:
+                command = [sys.executable, os.path.join(get_app_dir(), "src", "main.py")]
+            subprocess.Popen(command, cwd=get_app_dir(), close_fds=True)
+        except Exception as exc:
+            _show_error(self, "Restart Failed", f"{type(exc).__name__}: {exc}")
+            return
+        self._tray_exit_requested = True
+        self._disable_system_tray()
+        app = QApplication.instance()
+        self.close()
+        if app:
+            app.quit()
+
     # Settings search
     def _build_settings_search_bar(self) -> QWidget:
         bar = QWidget()
@@ -2582,6 +2805,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             ("Roblox", "roblox"),
             ("Discord", "discord"),
             ("Misc", "misc"),
+            ("Themes", "themes"),
             ("Developer", "developer"),
         ]
         cat_buttons: list[QPushButton] = []
@@ -3571,7 +3795,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         f.addStretch(1)
 
-        # Developer (Page 4)
+        sa, f = _scrollable()
+        content_stack.addWidget(sa)
+        self._build_theme_page(f, _sec)
+
+        # Developer (Page 5)
         sa, f = _scrollable()
         content_stack.addWidget(sa)
 
@@ -6045,7 +6273,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if not account:
             _show_error(self, "No Selection", "Select an account to stop.")
             return
-        self._ac_supervisor.disable_account(account)
+        self._ac_supervisor.disable_account(account, close_client=True)
         self._ac_refresh_list()
 
     def _ac_on_restart(self):
@@ -6064,8 +6292,10 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_refresh_list()
 
     def _ac_on_stop_all(self):
-        self._ac_supervisor.disable_all()
+        closed = self._ac_supervisor.disable_all(close_clients=True)
         self._ac_refresh_list()
+        if closed:
+            print(f"[INFO] Stop All closed {closed} Roblox process(es).")
 
     def _ac_on_remove(self):
         account = self._ac_selected_account()
@@ -6079,7 +6309,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._ac_supervisor.disable_account(account)
+        self._ac_supervisor.disable_account(account, close_client=True)
         self._ac_configs.pop(account, None)
         self._ac_snapshot.pop(account, None)
         self._ac_save_configs()
