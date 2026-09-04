@@ -12,10 +12,13 @@ Save accounts by cookie, browser login or user/password import. Group them, add
 notes, and join any game by Place ID, VIP link, job ID or by following a user.
 
 **Auto Connect**
-Keeps one Roblox client alive per account. It shows state, RAM, ping and how long
-a client has been closed, then relaunches that exact account when its client
-closes, crashes or hits a Roblox error (264, 266, 267, 268, 270, 277, 279 / ID 17,
-280, 403, 524, 600, "Failed to Load Library").
+Keeps one Roblox client alive per account. Each row shows state, RAM, ping, PID
+and how long the client has been closed, then relaunches that exact account when
+its client closes, crashes or hits a Roblox error (264, 266, 267, 268, 270, 277,
+279 / ID 17, 280, 403, 524, 600, "Failed to Load Library"). Select several
+accounts to start, stop or edit them together, or expand the arrow on a row for
+its own Start, Restart Client, Edit and Remove buttons. Stop All force-closes the
+clients and the bootstrapper, and cancels a launch that is still in flight.
 
 **Auto-Rejoin**
 Watches presence for a chosen Place ID and rejoins when the account leaves it.
@@ -29,17 +32,23 @@ mode that hides client windows.
 
 **Kill switch**
 The skull in the title bar closes every Roblox process instantly on left click.
-Right click opens a panel listing each process with its PID, account, RAM and
-uptime, so you can close them one by one.
+Right click opens a resizable panel listing each process with its PID, account,
+RAM and uptime, so you can close them one by one.
 
 **Themes**
 Eight built-in palettes (Midnight, Carbon, Nord, Dracula, Ocean, Crimson, Forest,
-Light) plus a colour picker for every interface role, saved between runs.
+Light) plus a colour picker for every interface role, saved between runs and
+applied to every window and dialog without a restart.
 
 **Settings**
 Searchable, grouped into General, Roblox, Discord, Misc, Themes and Developer.
-Includes a Roblox downloader, RAM trimming, Discord webhook alerts and a
-WebSocket API.
+Includes a Roblox downloader, RAM trimming, Discord webhook alerts, a WebSocket
+API and a slider for how often Auto Connect refreshes its status.
+
+**Interface**
+The main window is resizable and remembers its size. Dialogs carry their own
+icons and window controls, and the Auto Connect editor switches between one and
+two columns as you resize it.
 
 ## Install
 
