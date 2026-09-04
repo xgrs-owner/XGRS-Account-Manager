@@ -491,6 +491,7 @@ LINE = PALETTE["line"]
 SELECT = PALETTE["select"]
 NOTE = PALETTE["note"]
 FG_ACCENT = PALETTE["accent"]
+SKULL_HOVER = "#E0384E"
 
 
 def use_palette(palette: dict) -> None:
@@ -632,6 +633,38 @@ class _FloatingTooltip(QWidget):
             self._place_at(pt.x, pt.y)
         except Exception:
             pass
+
+class _HoverIconButton(QPushButton):
+    def __init__(self, icon_name, pixels, normal_color, hover_color,
+                 stroke=1.6, parent=None):
+        super().__init__(parent)
+        self._icon_name = icon_name
+        self._icon_pixels = pixels
+        self._normal_color = normal_color
+        self._hover_color = hover_color
+        self._stroke = stroke
+        self.setIconSize(QSize(pixels, pixels))
+        self._paint_icon(False)
+
+    def refresh_colors(self, normal_color, hover_color):
+        self._normal_color = normal_color
+        self._hover_color = hover_color
+        self._paint_icon(self.underMouse())
+
+    def _paint_icon(self, hovered):
+        color = self._hover_color if hovered else self._normal_color
+        self.setIcon(icons_mod.get_icon(
+            self._icon_name, color, self._icon_pixels, self._stroke,
+        ))
+
+    def enterEvent(self, event):
+        self._paint_icon(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._paint_icon(False)
+        super().leaveEvent(event)
+
 
 class _HotkeyCaptureButton(QPushButton):
     recording_started = Signal()
@@ -998,9 +1031,10 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
             QPushButton#skullButton {{
                 background: transparent; border: 0;
-                min-height: 24px; min-width: 30px; padding: 0;
+                min-height: 24px; min-width: 34px; padding: 0;
             }}
-            QPushButton#skullButton:hover {{ background: #5A2A2A; }}
+            QPushButton#skullButton:hover {{ background: transparent; }}
+            QPushButton#skullButton:pressed {{ background: transparent; }}
 
             QPushButton#navTab {{
                 background: transparent;
@@ -1237,11 +1271,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         icon_size = QSize(12, 12)
 
-        self._skull_btn = QPushButton()
+        self._skull_btn = _HoverIconButton("skull", 19, MUTED, SKULL_HOVER, 1.5)
         self._skull_btn.setObjectName("skullButton")
-        self._skull_btn.setProperty("vectorIcon", "skull")
-        self._skull_btn.setIcon(icons_mod.get_icon("skull", MUTED, 14, 1.5))
-        self._skull_btn.setIconSize(QSize(14, 14))
+        self._skull_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._skull_btn.setToolTip(
             "Left click: close every Roblox process now.\n"
             "Right click: pick which processes to close."
@@ -2615,7 +2647,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         return row
 
     def _paint_theme_swatch(self, key: str, value: str) -> None:
-        swatch = self._theme_color_swatches.get(key)
+        swatch = getattr(self, "_theme_color_swatches", {}).get(key)
         if swatch is None:
             return
         swatch.setStyleSheet(
@@ -2627,14 +2659,20 @@ class AccountManagerUIQt(QMainWindow): # Main Window
     def _refresh_theme_preset_buttons(self) -> None:
         active = themes_mod.load_state().get("preset", themes_mod.DEFAULT_PRESET)
         for name, button in getattr(self, "_theme_preset_buttons", {}).items():
-            button.setChecked(name == active)
+            try:
+                button.setChecked(name == active)
+            except RuntimeError:
+                continue
 
     def _refresh_theme_inputs(self, palette: dict) -> None:
         for key, value in palette.items():
             edit = getattr(self, "_theme_color_edits", {}).get(key)
-            if edit is not None and edit.text().strip().upper() != value:
-                edit.setText(value)
-            self._paint_theme_swatch(key, value)
+            try:
+                if edit is not None and edit.text().strip().upper() != value:
+                    edit.setText(value)
+                self._paint_theme_swatch(key, value)
+            except RuntimeError:
+                continue
 
     def _apply_theme(self, palette: dict) -> None:
         use_palette(palette)
@@ -2662,6 +2700,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
     def _refresh_vector_icons(self) -> None:
         size = self._NAV_ICON_SIZE
+        for button in self.findChildren(_HoverIconButton):
+            button.refresh_colors(MUTED, SKULL_HOVER)
         for button in self.findChildren(QPushButton):
             name = button.property("vectorIcon")
             if not name:
