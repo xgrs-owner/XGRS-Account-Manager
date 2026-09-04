@@ -38,10 +38,11 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox,
     QComboBox, QDialog, QFileDialog, QFrame,
-    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
+    QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu,
     QColorDialog, QMessageBox, QPushButton, QRadioButton, QScrollArea,
-    QSizePolicy, QDoubleSpinBox, QSlider, QSpinBox, QStackedWidget, QSystemTrayIcon,
+    QSizeGrip, QSizePolicy, QDoubleSpinBox, QSlider, QSpinBox, QStackedWidget,
+    QSystemTrayIcon,
     QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem,
     QToolButton, QVBoxLayout, QWidget,
 )
@@ -651,6 +652,10 @@ class _HoverIconButton(QPushButton):
         self._hover_color = hover_color
         self._paint_icon(self.underMouse())
 
+    def set_icon_name(self, icon_name):
+        self._icon_name = icon_name
+        self._paint_icon(self.underMouse())
+
     def _paint_icon(self, hovered):
         color = self._hover_color if hovered else self._normal_color
         self.setIcon(icons_mod.get_icon(
@@ -861,6 +866,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._activity_snapshot: dict[str, dict] = {}
         self._activity_widgets: dict[str, QWidget] = {}
         self._activity_labels: dict[str, tuple[QLabel, QLabel]] = {}
+        self._activity_pid_labels: dict[str, QLabel] = {}
 
         # Roblox Window Renamer
         self._window_renamer: window_renamer_mod.RobloxWindowRenamer | None = None
@@ -887,6 +893,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_snapshot: dict[str, dict] = {} # {username: metrics_dict}
         self._ac_list: QListWidget | None = None
         self._ac_rows: dict[str, dict] = {} # {username: {label_name: QLabel}}
+        self._ac_expanded: set[str] = set()
         self._ac_supervisor = ac.AutoConnectSupervisor(
             self.manager,
             on_update=lambda snapshot: self._bridge.auto_connect_update.emit(snapshot),
@@ -1092,6 +1099,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             QLabel#noteText {{ color: {NOTE};  font-size: 11px; font-weight: 600; }}
             QLabel#performanceSep {{ color: #7A7A7A; font-size: 11px; }}
             QLabel#ramUsage {{ color: #5DBBFF; font-size: 10px; }}
+            QLabel#pidLabel {{ color: {MUTED}; font-size: 10px; }}
             QLabel#cpuUsage {{ color: #2ECC71; font-size: 10px; }}
 
             QLineEdit {{
@@ -2682,6 +2690,14 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._refresh_theme_preset_buttons()
         QTimer.singleShot(0, self._rebuild_themed_pages)
 
+    def _release_page_references(self, index: int) -> None:
+        if index == 5:
+            self._console_view = None
+        elif index == 6:
+            self._ac_list = None
+            self._ac_rows = {}
+            self._ac_summary_lbl = None
+
     def _rebuild_themed_pages(self) -> None:
         current = self._page_stack.currentIndex()
         for index in sorted(self._lazy_page_builders):
@@ -2690,6 +2706,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             widget = self._page_stack.widget(index)
             if widget is None:
                 continue
+            self._release_page_references(index)
             self._page_stack.removeWidget(widget)
             widget.deleteLater()
             self._page_stack.insertWidget(index, QWidget())
@@ -2760,6 +2777,17 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self.close()
         if app:
             app.quit()
+
+    def _set_settings_category(self, index: int) -> None:
+        buttons = getattr(self, "_settings_cat_buttons", [])
+        stack = getattr(self, "_settings_stack", None)
+        if not buttons or stack is None:
+            return
+        index = max(0, min(int(index), len(buttons) - 1))
+        self._settings_category = index
+        stack.setCurrentIndex(index)
+        for position, button in enumerate(buttons):
+            button.setChecked(position == index)
 
     # Settings search
     def _build_settings_search_bar(self) -> QWidget:
@@ -2915,10 +2943,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             f"{total} result{'' if total == 1 else 's'}"
         )
         if total and per_page[self._settings_stack.currentIndex()] == 0:
-            first = next(i for i, count in enumerate(per_page) if count)
-            self._settings_stack.setCurrentIndex(first)
-            for index, button in enumerate(self._settings_cat_buttons):
-                button.setChecked(index == first)
+            self._set_settings_category(
+                next(i for i, count in enumerate(per_page) if count)
+            )
 
     def _build_settings_panel(self) -> QFrame: # Settings panel
         panel = QFrame()
@@ -2956,19 +2983,18 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         cat_buttons: list[QPushButton] = []
         self._settings_cat_buttons = cat_buttons
 
-        def _switch_cat(idx: int):
-            content_stack.setCurrentIndex(idx)
-            for i, b in enumerate(cat_buttons):
-                b.setChecked(i == idx)
+        active_category = getattr(self, "_settings_category", 0)
 
         for i, (name, icon_name) in enumerate(CATEGORIES):
             btn = self._make_nav_button(name, icon_name)
             btn.setAutoExclusive(False)
-            btn.setChecked(i == 0)
+            btn.setChecked(i == active_category)
             btn.setIcon(icons_mod.get_icon(
-                icon_name, TEXT if i == 0 else MUTED, self._NAV_ICON_SIZE,
+                icon_name, TEXT if i == active_category else MUTED, self._NAV_ICON_SIZE,
             ))
-            btn.clicked.connect(lambda _=False, idx=i: _switch_cat(idx))
+            btn.clicked.connect(
+                lambda _=False, idx=i: self._set_settings_category(idx)
+            )
             cat_lay.addWidget(btn)
             cat_buttons.append(btn)
 
@@ -2984,6 +3010,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         root_lay.addWidget(cat_panel)
         root_lay.addWidget(right_side, 1)
+        QTimer.singleShot(0, lambda: self._set_settings_category(active_category))
 
         # Shared helpers
         self._settings_pages: list[QWidget] = []
@@ -4056,7 +4083,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         ws_docs_btn = QPushButton("Read Documentation")
         ws_docs_btn.clicked.connect(
-            lambda: webbrowser.open("https://www.evanovarram.com/documentation/developer")
+            lambda: webbrowser.open("https://xgrs.lol")
         )
         f.addWidget(ws_docs_btn)
 
@@ -5240,6 +5267,13 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                     ram_label.setText(ram_text)
                 if cpu_label.text() != cpu_text:
                     cpu_label.setText(cpu_text)
+
+            pid_label = self._activity_pid_labels.get(username)
+            if pid_label is not None:
+                pids = [str(pid) for pid in (metrics.get("pids") or [])]
+                pid_text = f"PID {', '.join(pids)}" if pids else "PID -"
+                if pid_label.text() != pid_text:
+                    pid_label.setText(pid_text)
             container.setVisible(True)
 
     def _ar_update_activity_rows(self) -> None:
@@ -6168,7 +6202,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_list.clear()
         self._ac_rows.clear()
 
-        if hasattr(self, "_ac_summary_lbl"):
+        if getattr(self, "_ac_summary_lbl", None) is not None:
             enabled = sum(
                 1 for account in self._ac_configs
                 if self._ac_supervisor.is_account_enabled(account)
@@ -6192,10 +6226,27 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             item.setSizeHint(QSize(0, ITEM_H))
             item.setData(Qt.ItemDataRole.UserRole, account)
 
+            item.setData(Qt.ItemDataRole.UserRole + 1, "row")
+
             row = QWidget()
             row_lay = QHBoxLayout(row)
-            row_lay.setContentsMargins(4, 0, 6, 0)
+            row_lay.setContentsMargins(2, 0, 6, 0)
             row_lay.setSpacing(5)
+
+            arrow = _HoverIconButton(
+                "chevron_down" if account in self._ac_expanded else "chevron_right",
+                11, MUTED, TEXT, 2.2,
+            )
+            arrow.setFixedSize(16, ITEM_H)
+            arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+            arrow.setStyleSheet(
+                "QPushButton { background: transparent; border: none; }"
+            )
+            arrow.setToolTip("Show actions")
+            arrow.clicked.connect(
+                lambda _=False, name=account: self._ac_toggle_expanded(name)
+            )
+            row_lay.addWidget(arrow)
 
             av_container = QWidget()
             av_container.setFixedSize(AV, AV)
@@ -6246,6 +6297,12 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             row_lay.addWidget(self._ac_make_separator())
             row_lay.addWidget(ping_lbl)
 
+            pid_lbl = QLabel("PID -")
+            pid_lbl.setObjectName("pidLabel")
+            pid_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+            row_lay.addWidget(self._ac_make_separator())
+            row_lay.addWidget(pid_lbl)
+
             place_lbl = QLabel(f"Place: {cfg.get('place_id') or 'VIP'}")
             place_lbl.setAlignment(
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
@@ -6265,20 +6322,123 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 "time": time_lbl,
                 "ram": ram_lbl,
                 "ping": ping_lbl,
+                "pid": pid_lbl,
                 "place": place_lbl,
+                "arrow": arrow,
             }
 
+            action_item = QListWidgetItem("")
+            action_item.setSizeHint(QSize(0, 28))
+            action_item.setData(Qt.ItemDataRole.UserRole, account)
+            action_item.setData(Qt.ItemDataRole.UserRole + 1, "actions")
+            action_item.setFlags(action_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self._ac_list.addItem(action_item)
+            self._ac_list.setItemWidget(action_item, self._ac_build_action_row(account))
+            action_item.setHidden(account not in self._ac_expanded)
+
         if current:
-            for index in range(self._ac_list.count()):
-                item = self._ac_list.item(index)
-                if item and item.data(Qt.ItemDataRole.UserRole) == current:
-                    self._ac_list.setCurrentItem(item)
-                    break
+            self._ac_select_account(current)
         if self._ac_list.count() > 0 and not self._ac_list.currentItem():
             self._ac_list.setCurrentRow(0)
 
         self._ac_load_avatars_async()
         self._ac_apply_snapshot()
+
+    def _ac_build_action_row(self, account: str) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(20, 0, 6, 3)
+        outer.setSpacing(0)
+
+        panel = QFrame()
+        panel.setObjectName("acActionPanel")
+        panel.setStyleSheet(f"""
+            QFrame#acActionPanel {{
+                background: {PANEL};
+                border: 1px solid {LINE};
+                border-top: none;
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
+                border-bottom-left-radius: 6px;
+                border-bottom-right-radius: 6px;
+            }}
+        """)
+        outer.addWidget(panel)
+
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(8, 3, 8, 4)
+        layout.setSpacing(4)
+
+        style = (
+            f"QPushButton {{ background: {INPUT}; border: 1px solid {LINE};"
+            f" color: {TEXT}; font-size: 10px; padding: 2px 10px;"
+            f" border-radius: 3px; min-height: 20px; }}"
+            f"QPushButton:hover {{ background: {SELECT}; }}"
+        )
+        danger_style = style + (
+            f"QPushButton:hover {{ background: #5A2A2A; color: #FFFFFF; }}"
+        )
+
+        active = self._ac_supervisor.is_account_enabled(account)
+        actions_list = [
+            ("Stop" if active else "Start",
+             self._ac_on_stop if active else self._ac_on_start, style),
+            ("Restart Client", self._ac_on_restart, style),
+            ("Edit", self._ac_on_edit, style),
+            ("Remove", self._ac_on_remove, danger_style),
+        ]
+        for label, handler, button_style in actions_list:
+            button = QPushButton(label)
+            button.setStyleSheet(button_style)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _=False, name=account, call=handler:
+                self._ac_run_action(name, call)
+            )
+            layout.addWidget(button)
+        layout.addStretch(1)
+        return widget
+
+    def _ac_select_account(self, account: str) -> None:
+        if self._ac_list is None:
+            return
+        for index in range(self._ac_list.count()):
+            item = self._ac_list.item(index)
+            if (
+                item is not None
+                and item.data(Qt.ItemDataRole.UserRole) == account
+                and item.data(Qt.ItemDataRole.UserRole + 1) == "row"
+            ):
+                self._ac_list.setCurrentItem(item)
+                return
+
+    def _ac_run_action(self, account: str, handler) -> None:
+        self._ac_select_account(account)
+        handler()
+
+    def _ac_toggle_expanded(self, account: str) -> None:
+        if account in self._ac_expanded:
+            self._ac_expanded.discard(account)
+        else:
+            self._ac_expanded.add(account)
+        self._ac_apply_expansion()
+
+    def _ac_apply_expansion(self) -> None:
+        if self._ac_list is None:
+            return
+        for index in range(self._ac_list.count()):
+            item = self._ac_list.item(index)
+            if item is None or item.data(Qt.ItemDataRole.UserRole + 1) != "actions":
+                continue
+            account = item.data(Qt.ItemDataRole.UserRole)
+            item.setHidden(account not in self._ac_expanded)
+        for account, widgets in self._ac_rows.items():
+            arrow = widgets.get("arrow")
+            if arrow is None:
+                continue
+            arrow.set_icon_name(
+                "chevron_down" if account in self._ac_expanded else "chevron_right"
+            )
 
     @staticmethod
     def _ac_make_separator() -> QLabel:
@@ -6315,6 +6475,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 widgets["state"].setText("stopped")
                 widgets["state"].setStyleSheet(f"color: {MUTED}; font-size: 10px;")
                 widgets["dot"].setVisible(False)
+                widgets["pid"].setText("PID -")
 
     def _ac_apply_metrics(self, widgets: dict, metrics: dict) -> None:
         state = str(metrics.get("state", ac.STATE_STOPPED))
@@ -6345,6 +6506,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         ram_mb = float(metrics.get("ram_mb", 0.0) or 0.0)
         widgets["ram"].setText(f"RAM: {ram_mb:.0f} MB")
+
+        pid = metrics.get("pid")
+        widgets["pid"].setText(f"PID {pid}" if pid else "PID -")
 
         ping_ms = metrics.get("ping_ms")
         if ping_ms is None:
@@ -7006,6 +7170,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._presence_dots.clear()
         self._activity_widgets.clear()
         self._activity_labels.clear()
+        self._activity_pid_labels.clear()
         self._invalid_badges.clear()
         self._account_avatar_containers.clear()
         self._account_name_labels.clear()
@@ -7126,13 +7291,24 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                     Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
                 )
 
+                pid_sep = QLabel("|")
+                pid_sep.setObjectName("performanceSep")
+                pid_lbl = QLabel("")
+                pid_lbl.setObjectName("pidLabel")
+                pid_lbl.setAlignment(
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+                )
+
                 activity_lay.addWidget(ram_sep)
                 activity_lay.addWidget(ram_lbl)
                 activity_lay.addWidget(cpu_sep)
                 activity_lay.addWidget(cpu_lbl)
+                activity_lay.addWidget(pid_sep)
+                activity_lay.addWidget(pid_lbl)
                 row_lay.addWidget(activity_container)
                 self._activity_widgets[username] = activity_container
                 self._activity_labels[username] = (ram_lbl, cpu_lbl)
+                self._activity_pid_labels[username] = pid_lbl
                 activity_container.setVisible(username in self._activity_snapshot)
             row_lay.addStretch(1)
             row.setFixedHeight(ITEM_H)
@@ -8055,6 +8231,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         widget = getattr(self, "_console_view", None)
         if widget is None:
             return
+        try:
+            widget.isVisible()
+        except RuntimeError:
+            self._console_view = None
+            return
         batch: list[tuple[str, str | None]] = []
         for _ in range(50):
             try:
@@ -8063,18 +8244,23 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 break
         if not batch:
             return
-        cursor = widget.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        for text, color in batch:
-            fmt = QTextCharFormat()
-            if color:
-                fmt.setForeground(QColor(color))
-            else:
-                fmt.clearForeground()
-            cursor.setCharFormat(fmt)
-            cursor.insertText(text + "\n")
-        widget.setTextCursor(cursor)
-        widget.ensureCursorVisible()
+        try:
+            cursor = widget.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            for text, color in batch:
+                fmt = QTextCharFormat()
+                if color:
+                    fmt.setForeground(QColor(color))
+                else:
+                    fmt.clearForeground()
+                cursor.setCharFormat(fmt)
+                cursor.insertText(text + "\n")
+            widget.setTextCursor(cursor)
+            widget.ensureCursorVisible()
+        except RuntimeError:
+            self._console_view = None
+            q.extendleft(reversed(batch))
+            return
         if q:
             QTimer.singleShot(0, self._drain_console_queue)
 
@@ -8138,7 +8324,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         return panel
 
 # Dialogs
-_DLG_STYLE = f"""
+def _dlg_style() -> str:
+    return f"""
     QDialog   {{ background: {BG}; }}
     QLabel    {{ color: {TEXT}; font-size: 11px; }}
     QLineEdit {{ background: {INPUT}; border: 1px solid {LINE};
@@ -8154,13 +8341,67 @@ _DLG_STYLE = f"""
 """
 
 
+
+def _toggle_dialog_maximized(window, button) -> None:
+    if window.isMaximized():
+        window.showNormal()
+    else:
+        window.showMaximized()
+    button.set_icon_name("restore" if window.isMaximized() else "maximize")
+    button.setToolTip("Restore" if window.isMaximized() else "Maximize")
+
+
+def _dialog_title_row(title, icon_name, on_close, window=None) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(7)
+
+    icon_label = QLabel()
+    icon_label.setPixmap(icons_mod.get_icon(icon_name, FG_ACCENT, 15, 1.8).pixmap(15, 15))
+    icon_label.setFixedSize(15, 15)
+    row.addWidget(icon_label)
+
+    caption = QLabel(title)
+    caption.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: bold;")
+    row.addWidget(caption)
+    row.addStretch(1)
+
+    transparent = "QPushButton { background: transparent; border: none; }"
+    if window is not None:
+        minimize_btn = _HoverIconButton("minimize", 13, MUTED, TEXT, 1.8)
+        minimize_btn.setFixedSize(22, 22)
+        minimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        minimize_btn.setStyleSheet(transparent)
+        minimize_btn.setToolTip("Minimize")
+        minimize_btn.clicked.connect(window.showMinimized)
+        row.addWidget(minimize_btn)
+
+        maximize_btn = _HoverIconButton("maximize", 12, MUTED, TEXT, 1.8)
+        maximize_btn.setFixedSize(22, 22)
+        maximize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        maximize_btn.setStyleSheet(transparent)
+        maximize_btn.setToolTip("Maximize")
+        maximize_btn.clicked.connect(
+            lambda _=False, w=window, b=maximize_btn: _toggle_dialog_maximized(w, b)
+        )
+        row.addWidget(maximize_btn)
+
+    close_btn = _HoverIconButton("close", 13, MUTED, "#E0384E", 2.0)
+    close_btn.setFixedSize(22, 22)
+    close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    close_btn.setStyleSheet(transparent)
+    close_btn.setToolTip("Close")
+    close_btn.clicked.connect(on_close)
+    row.addWidget(close_btn)
+    return row
+
 class _ImportCookieDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.cookie_value = ""
         self.setWindowTitle("Import Cookie")
         self.setFixedSize(480, 200)
-        self.setStyleSheet(_DLG_STYLE)
+        self.setStyleSheet(_dlg_style())
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
@@ -8197,7 +8438,7 @@ class _AccountCreatorDialog(QDialog):
         self.options: dict = {}
         self.setWindowTitle("Account Creator")
         self.setFixedSize(540, 320)
-        self.setStyleSheet(_DLG_STYLE + f"""
+        self.setStyleSheet(_dlg_style() + f"""
             QTabWidget::pane {{
                 background: {PANEL};
                 border: 1px solid {LINE};
@@ -8374,7 +8615,7 @@ class _ImportUserPassDialog(QDialog):
         self._row_widgets: list[tuple[QLineEdit, QLineEdit, QWidget]] = []
         self.setWindowTitle("Import User:Pass")
         self.setFixedSize(460, 380)
-        self.setStyleSheet(_DLG_STYLE)
+        self.setStyleSheet(_dlg_style())
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
@@ -8489,7 +8730,7 @@ class _AddJavascriptDialog(QDialog):
         self.js_value = ""
         self.setWindowTitle("Add via Javascript")
         self.setFixedSize(480, 260)
-        self.setStyleSheet(_DLG_STYLE)
+        self.setStyleSheet(_dlg_style())
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
@@ -8526,7 +8767,7 @@ class _EditNoteDialog(QDialog):
         self.note_value = current_note
         self.setWindowTitle(f"Edit Note - {username}")
         self.setFixedSize(380, 150)
-        self.setStyleSheet(_DLG_STYLE)
+        self.setStyleSheet(_dlg_style())
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 16)
@@ -8659,7 +8900,7 @@ class _AutoRejoinAddWindow(_AccountPickerMixin, QDialog):
         # the other one is for add
         self.setFixedSize(225 if self._edit_mode else 550, 420)
         self.setSizeGripEnabled(False)
-        self.setStyleSheet(_DLG_STYLE + f"""
+        self.setStyleSheet(_dlg_style() + f"""
             QListWidget {{
                 background: {INPUT}; border: 1px solid {LINE};
                 font-size: 11px; color: {TEXT};
@@ -8678,22 +8919,10 @@ class _AutoRejoinAddWindow(_AccountPickerMixin, QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
 
-        # Title bar row
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel("Edit Auto-Rejoin" if self._edit_mode else "Add Account to Auto-Rejoin")
-        lbl.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: bold;")
-        title_row.addWidget(lbl)
-        title_row.addStretch(1)
-        close_btn = QPushButton("\u2715")
-        close_btn.setFixedSize(22, 22)
-        close_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; color: {MUTED}; font-size: 13px; }}"
-            f"QPushButton:hover {{ color: {TEXT}; }}"
-        )
-        close_btn.clicked.connect(self.reject)
-        title_row.addWidget(close_btn)
-        root.addLayout(title_row)
+        root.addLayout(_dialog_title_row(
+            "Edit Auto-Rejoin" if self._edit_mode else "Add Account to Auto-Rejoin",
+            "auto_rejoin", self.reject,
+        ))
 
         # Sub-title hint directly below the title
         self._hint_label = QLabel("Ctrl / Shift to select multiple accounts")
@@ -8895,8 +9124,10 @@ class _AutoRejoinAddWindow(_AccountPickerMixin, QDialog):
 class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
     """
     Add accounts to Auto Connect or edit one account's configuration.
-    Left side: account picker (add mode only). Right side: configuration form.
+    The form switches between one and two columns as the window is resized.
     """
+
+    TWO_COLUMN_WIDTH = 430
 
     def __init__(self, manager, parent=None, edit_account=None, edit_config=None):
         super().__init__(parent)
@@ -8906,12 +9137,19 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         self._edit_account = edit_account
         self._edit_config = ac.normalize_config(edit_config or {})
         self._current_group: str | None = None
+        self._columns = 0
+        self._field_blocks: list[QWidget] = []
+        self._option_blocks: list[QWidget] = []
+        self._drag_offset = QPoint()
 
         title = "Edit Auto Connect" if self._edit_mode else "Add Account to Auto Connect"
         self.setWindowTitle(title)
-        self.setFixedSize(300 if self._edit_mode else 630, 520)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setMinimumSize(320, 430)
+        self.resize(360, 620) if self._edit_mode else self.resize(720, 560)
         self.setSizeGripEnabled(False)
-        self.setStyleSheet(_DLG_STYLE + f"""
+        self.setStyleSheet(_dlg_style() + f"""
+            QDialog {{ background: {BG}; border: 1px solid {LINE}; }}
             QListWidget {{
                 background: {INPUT}; border: 1px solid {LINE};
                 font-size: 11px; color: {TEXT};
@@ -8924,27 +9162,13 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
             }}
             QPushButton#groupTab:checked {{ background: {SELECT}; color: {TEXT}; }}
             QPushButton#groupTab:hover   {{ background: {SELECT}; }}
+            QScrollArea {{ background: transparent; border: none; }}
         """)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 12)
+        root.setContentsMargins(14, 10, 14, 10)
         root.setSpacing(8)
-
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: bold;")
-        title_row.addWidget(title_lbl)
-        title_row.addStretch(1)
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(22, 22)
-        close_btn.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; color: {MUTED}; font-size: 13px; }}"
-            f"QPushButton:hover {{ color: {TEXT}; }}"
-        )
-        close_btn.clicked.connect(self.reject)
-        title_row.addWidget(close_btn)
-        root.addLayout(title_row)
+        root.addLayout(_dialog_title_row(title, "auto_connect", self.reject))
 
         self._hint_label = QLabel("Ctrl / Shift to select multiple accounts")
         self._hint_label.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
@@ -8954,7 +9178,6 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(10)
 
-        # Left: account picker
         self._left_widget = QWidget()
         left = QVBoxLayout(self._left_widget)
         left.setContentsMargins(0, 0, 0, 0)
@@ -8965,7 +9188,6 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         self._gscroll.setFixedHeight(28)
         self._gscroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._gscroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._gscroll.setStyleSheet("background: transparent; border: none;")
 
         gbar_widget = QWidget()
         gbar_widget.setStyleSheet("background: transparent;")
@@ -8980,170 +9202,239 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         left.addWidget(self._acc_list, 1)
         body.addWidget(self._left_widget, 1)
 
-        # Right: configuration form
-        right = QVBoxLayout()
+        self._right_widget = QWidget()
+        right = QVBoxLayout(self._right_widget)
         right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(5)
-        right.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        _LBL = f"color: {MUTED}; font-size: 10px;"
-        _INP = (
-            f"QLineEdit {{ background: {INPUT}; border: 1px solid {LINE};"
-            f" color: {TEXT}; padding: 3px 5px; font-size: 11px; }}"
-        )
-        _SPN = (
-            f"QSpinBox {{ background: {INPUT}; border: 1px solid {LINE};"
-            f" color: {TEXT}; padding: 2px 4px; font-size: 11px; }}"
-        )
-        _CHK = (
-            f"QCheckBox {{ color: {TEXT}; font-size: 11px; }}"
-            f"QCheckBox::indicator {{ width: 13px; height: 13px; }}"
-        )
-        _FIELD_WIDTH = 230
+        right.setSpacing(6)
 
         cfg_hdr = QLabel("Configuration")
         cfg_hdr.setStyleSheet(f"color: {TEXT}; font-size: 11px; font-weight: bold;")
         right.addWidget(cfg_hdr)
 
-        right.addWidget(QLabel("Place ID:", styleSheet=_LBL))
-        self._place = QLineEdit()
-        self._place.setPlaceholderText("e.g. 8562822414")
-        self._place.setStyleSheet(_INP)
-        self._place.setFixedWidth(_FIELD_WIDTH)
-        right.addWidget(self._place)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        content_lay = QVBoxLayout(content)
+        content_lay.setContentsMargins(0, 0, 6, 0)
+        content_lay.setSpacing(10)
 
-        right.addWidget(QLabel("VIP Link or Link Code:", styleSheet=_LBL))
-        self._private_server = QLineEdit()
-        self._private_server.setPlaceholderText("optional, VIP / share link")
-        self._private_server.setToolTip(
-            "Accepts a full VIP URL with privateServerLinkCode, a roblox.com/share "
-            "link, or a numeric link code. The Place ID is resolved from the link "
-            "when the Place ID field is left empty."
+        self._fields_grid = QGridLayout()
+        self._fields_grid.setContentsMargins(0, 0, 0, 0)
+        self._fields_grid.setHorizontalSpacing(10)
+        self._fields_grid.setVerticalSpacing(8)
+        content_lay.addLayout(self._fields_grid)
+
+        options_hdr = QLabel("Behaviour")
+        options_hdr.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700;")
+        content_lay.addWidget(options_hdr)
+
+        self._options_grid = QGridLayout()
+        self._options_grid.setContentsMargins(0, 0, 0, 0)
+        self._options_grid.setHorizontalSpacing(10)
+        self._options_grid.setVerticalSpacing(4)
+        content_lay.addLayout(self._options_grid)
+        content_lay.addStretch(1)
+
+        scroll.setWidget(content)
+        right.addWidget(scroll, 1)
+
+        self._build_fields()
+        self._build_options()
+
+        self._save_btn = QPushButton(
+            "  Save Changes" if self._edit_mode else "  Add Account"
         )
-        self._private_server.setStyleSheet(_INP)
-        self._private_server.setFixedWidth(_FIELD_WIDTH)
-        right.addWidget(self._private_server)
-
-        right.addWidget(QLabel("Job ID:", styleSheet=_LBL))
-        self._job = QLineEdit()
-        self._job.setPlaceholderText("optional")
-        self._job.setStyleSheet(_INP)
-        self._job.setFixedWidth(_FIELD_WIDTH)
-        right.addWidget(self._job)
-
-        delay_row = QHBoxLayout()
-        delay_row.addWidget(QLabel("Relaunch after:", styleSheet=_LBL))
-        self._relaunch_delay = QSpinBox()
-        self._relaunch_delay.setRange(0, 600)
-        self._relaunch_delay.setValue(10)
-        self._relaunch_delay.setSuffix(" s")
-        self._relaunch_delay.setToolTip(
-            "How long to wait after the client closed before starting it again."
-        )
-        self._relaunch_delay.setStyleSheet(_SPN)
-        self._relaunch_delay.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        delay_row.addWidget(self._relaunch_delay)
-        right.addLayout(delay_row)
-
-        retries_row = QHBoxLayout()
-        retries_row.addWidget(QLabel("Max retries:", styleSheet=_LBL))
-        self._retries = QSpinBox()
-        self._retries.setRange(0, 999)
-        self._retries.setValue(0)
-        self._retries.setSpecialValueText("unlimited")
-        self._retries.setStyleSheet(_SPN)
-        self._retries.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        retries_row.addWidget(self._retries)
-        right.addLayout(retries_row)
-
-        stuck_row = QHBoxLayout()
-        stuck_row.addWidget(QLabel("Stuck timeout:", styleSheet=_LBL))
-        self._stuck_timeout = QSpinBox()
-        self._stuck_timeout.setRange(30, 3600)
-        self._stuck_timeout.setValue(180)
-        self._stuck_timeout.setSuffix(" s")
-        self._stuck_timeout.setToolTip(
-            "How long the client may stay outside a game (error prompt, stuck on "
-            "the loading screen) before it is force-closed and restarted."
-        )
-        self._stuck_timeout.setStyleSheet(_SPN)
-        self._stuck_timeout.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        stuck_row.addWidget(self._stuck_timeout)
-        right.addLayout(stuck_row)
-
-        self._internet_chk = QCheckBox("Check internet before launch")
-        self._internet_chk.setChecked(True)
-        self._internet_chk.setStyleSheet(_CHK)
-        right.addWidget(self._internet_chk)
-
-        self._presence_chk = QCheckBox("Check player presence")
-        self._presence_chk.setChecked(True)
-        self._presence_chk.setToolTip(
-            "Ask the Roblox presence API whether this account is really in a game."
-        )
-        self._presence_chk.setStyleSheet(_CHK)
-        right.addWidget(self._presence_chk)
-
-        self._error_chk = QCheckBox("Restart on Roblox errors")
-        self._error_chk.setChecked(True)
-        self._error_chk.setToolTip(
-            "Force-close and relaunch the client when Roblox reports error code "
-            + ", ".join(str(code) for code in ac.ERROR_CODES)
-            + ", 279 (ID 17) or \"Failed to Load Library\"."
-        )
-        self._error_chk.setStyleSheet(_CHK)
-        right.addWidget(self._error_chk)
-
-        self._stuck_chk = QCheckBox("Restart when stuck outside a game")
-        self._stuck_chk.setChecked(True)
-        self._stuck_chk.setToolTip(
-            "Catches every other failure: any error prompt keeps the account out "
-            "of a game, so the client is restarted after the stuck timeout."
-        )
-        self._stuck_chk.setStyleSheet(_CHK)
-        right.addWidget(self._stuck_chk)
-
-        self._ping_chk = QCheckBox("Measure ping")
-        self._ping_chk.setChecked(True)
-        self._ping_chk.setStyleSheet(_CHK)
-        right.addWidget(self._ping_chk)
-
-        self._autostart_chk = QCheckBox("Start with the app")
-        self._autostart_chk.setChecked(False)
-        self._autostart_chk.setToolTip(
-            "Begin monitoring this account as soon as the manager opens."
-        )
-        self._autostart_chk.setStyleSheet(_CHK)
-        right.addWidget(self._autostart_chk)
-
-        right.addStretch(1)
-
-        self._save_btn = QPushButton("Save Changes" if self._edit_mode else "Add Account")
-        self._save_btn.setFixedHeight(30)
-        self._save_btn.setFixedWidth(_FIELD_WIDTH)
+        self._save_btn.setIcon(icons_mod.get_icon("check", TEXT, 13, 2.2))
+        self._save_btn.setIconSize(QSize(13, 13))
+        self._save_btn.setFixedHeight(32)
+        self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._save_btn.setStyleSheet(
             f"QPushButton {{ background: {SELECT}; border: 1px solid {LINE};"
-            f"  min-height: 30px; font-weight: 700; text-align: center; color: {TEXT}; }}"
-            f"QPushButton:hover   {{ background: #3A3A3A; }}"
-            f"QPushButton:pressed {{ background: #1E1E1E; }}"
+            f"  min-height: 30px; font-weight: 700; text-align: center; color: {TEXT};"
+            f"  border-radius: 4px; }}"
+            f"QPushButton:hover   {{ border: 1px solid {FG_ACCENT}; }}"
+            f"QPushButton:pressed {{ background: {INPUT}; }}"
         )
         self._save_btn.clicked.connect(self._on_save)
         right.addWidget(self._save_btn)
 
-        body.addLayout(right)
+        body.addWidget(self._right_widget, 2)
         root.addLayout(body, 1)
+
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 0, 0)
+        grip_row.addStretch(1)
+        grip = QSizeGrip(self)
+        grip.setFixedSize(14, 14)
+        grip_row.addWidget(grip)
+        root.addLayout(grip_row)
 
         if self._edit_mode:
             self._apply_edit_mode()
         else:
             self._rebuild_group_bar()
             self._populate_list()
+
+        self._apply_columns(1)
+
+    def _input_style(self) -> str:
+        return (
+            f"QLineEdit {{ background: {INPUT}; border: 1px solid {LINE};"
+            f" color: {TEXT}; padding: 4px 6px; font-size: 11px; border-radius: 3px; }}"
+            f"QLineEdit:focus {{ border: 1px solid {FG_ACCENT}; }}"
+        )
+
+    def _spin_style(self) -> str:
+        return (
+            f"QSpinBox {{ background: {INPUT}; border: 1px solid {LINE};"
+            f" color: {TEXT}; padding: 3px 5px; font-size: 11px; border-radius: 3px; }}"
+        )
+
+    def _make_field(self, caption: str, widget: QWidget, tip: str = "") -> QWidget:
+        block = QWidget()
+        layout = QVBoxLayout(block)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        label = QLabel(caption)
+        label.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        if tip:
+            label.setToolTip(tip)
+            widget.setToolTip(tip)
+        widget.setMinimumWidth(120)
+        widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout.addWidget(label)
+        layout.addWidget(widget)
+        return block
+
+    def _build_fields(self) -> None:
+        self._place = QLineEdit()
+        self._place.setPlaceholderText("e.g. 8562822414")
+        self._place.setStyleSheet(self._input_style())
+
+        self._private_server = QLineEdit()
+        self._private_server.setPlaceholderText("optional, VIP or share link")
+        self._private_server.setStyleSheet(self._input_style())
+
+        self._job = QLineEdit()
+        self._job.setPlaceholderText("optional")
+        self._job.setStyleSheet(self._input_style())
+
+        self._relaunch_delay = QSpinBox()
+        self._relaunch_delay.setRange(0, 600)
+        self._relaunch_delay.setValue(10)
+        self._relaunch_delay.setSuffix(" s")
+        self._relaunch_delay.setStyleSheet(self._spin_style())
+
+        self._retries = QSpinBox()
+        self._retries.setRange(0, 999)
+        self._retries.setValue(0)
+        self._retries.setSpecialValueText("unlimited")
+        self._retries.setStyleSheet(self._spin_style())
+
+        self._stuck_timeout = QSpinBox()
+        self._stuck_timeout.setRange(30, 3600)
+        self._stuck_timeout.setValue(180)
+        self._stuck_timeout.setSuffix(" s")
+        self._stuck_timeout.setStyleSheet(self._spin_style())
+
+        self._field_blocks = [
+            self._make_field("Place ID", self._place),
+            self._make_field(
+                "VIP Link or Link Code", self._private_server,
+                "Accepts a full VIP URL with privateServerLinkCode, a roblox.com/share "
+                "link, or a numeric link code. The Place ID is resolved from the link "
+                "when the Place ID field is left empty.",
+            ),
+            self._make_field("Job ID", self._job),
+            self._make_field(
+                "Relaunch after", self._relaunch_delay,
+                "How long to wait after the client closed before starting it again.",
+            ),
+            self._make_field("Max retries", self._retries),
+            self._make_field(
+                "Stuck timeout", self._stuck_timeout,
+                "How long the client may stay outside a game before it is "
+                "force-closed and restarted.",
+            ),
+        ]
+
+    def _build_options(self) -> None:
+        checkbox_style = (
+            f"QCheckBox {{ color: {TEXT}; font-size: 11px; }}"
+            f"QCheckBox::indicator {{ width: 13px; height: 13px; }}"
+        )
+        error_tip = (
+            "Force-close and relaunch the client when Roblox reports error code "
+            + ", ".join(str(code) for code in ac.ERROR_CODES)
+            + ', 279 (ID 17) or "Failed to Load Library".'
+        )
+        definitions = [
+            ("_internet_chk", "Check internet before launch", True, ""),
+            ("_presence_chk", "Check player presence", True,
+             "Ask the Roblox presence API whether this account is really in a game."),
+            ("_error_chk", "Restart on Roblox errors", True, error_tip),
+            ("_stuck_chk", "Restart when stuck outside a game", True,
+             "Catches every other failure: any error prompt keeps the account out "
+             "of a game, so the client is restarted after the stuck timeout."),
+            ("_ping_chk", "Measure ping", True, ""),
+            ("_autostart_chk", "Start with the app", False,
+             "Begin monitoring this account as soon as the manager opens."),
+        ]
+        self._option_blocks = []
+        for attribute, caption, default, tip in definitions:
+            box = QCheckBox(caption)
+            box.setChecked(default)
+            box.setStyleSheet(checkbox_style)
+            if tip:
+                box.setToolTip(tip)
+            setattr(self, attribute, box)
+            self._option_blocks.append(box)
+
+    def _apply_columns(self, columns: int) -> None:
+        if columns == self._columns:
+            return
+        self._columns = columns
+        for grid, blocks in (
+            (self._fields_grid, self._field_blocks),
+            (self._options_grid, self._option_blocks),
+        ):
+            while grid.count():
+                grid.takeAt(0)
+            for index, block in enumerate(blocks):
+                grid.addWidget(block, index // columns, index % columns)
+            grid.setColumnStretch(0, 1)
+            grid.setColumnStretch(1, 1 if columns > 1 else 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        used_by_list = self._left_widget.width() if self._left_widget.isVisible() else 0
+        available = self.width() - used_by_list - 46
+        self._apply_columns(2 if available >= self.TWO_COLUMN_WIDTH else 1)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 32:
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and not self._drag_offset.isNull()
+        ):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = QPoint()
+        super().mouseReleaseEvent(event)
 
     def _apply_edit_mode(self):
         self._left_widget.hide()
@@ -9219,9 +9510,16 @@ class _RobloxProcessPanel(QDialog):
         super().__init__(parent)
         self.manager = manager
         self.setWindowTitle("Roblox Processes")
-        self.setFixedSize(460, 340)
+        self.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        )
+        self.setWindowIcon(icons_mod.get_icon("skull", TEXT, 32, 1.8))
+        self.setMinimumSize(430, 300)
+        self.resize(470, 360)
         self.setSizeGripEnabled(False)
-        self.setStyleSheet(_DLG_STYLE + f"""
+        self._drag_offset = QPoint()
+        self.setStyleSheet(_dlg_style() + f"""
+            QDialog {{ background: {BG}; border: 1px solid {LINE}; }}
             QListWidget {{
                 background: {INPUT}; border: 1px solid {LINE};
                 font-size: 11px; color: {TEXT};
@@ -9233,15 +9531,12 @@ class _RobloxProcessPanel(QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
 
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("Roblox Processes")
-        title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: bold;")
-        title_row.addWidget(title)
-        title_row.addStretch(1)
+        title_row = _dialog_title_row(
+            "Roblox Processes", "skull", self.reject, window=self,
+        )
         self._count_label = QLabel("")
         self._count_label.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
-        title_row.addWidget(self._count_label)
+        title_row.insertWidget(3, self._count_label)
         close_btn = QPushButton("\u2715")
         close_btn.setFixedSize(22, 22)
         close_btn.setStyleSheet(
@@ -9300,6 +9595,10 @@ class _RobloxProcessPanel(QDialog):
         )
         close_all_btn.clicked.connect(self._close_all)
         buttons.addWidget(close_all_btn)
+
+        grip = QSizeGrip(self)
+        grip.setFixedSize(14, 14)
+        buttons.addWidget(grip, 0, Qt.AlignmentFlag.AlignBottom)
         root.addLayout(buttons)
 
         self._timer = QTimer(self)
@@ -9383,6 +9682,29 @@ class _RobloxProcessPanel(QDialog):
         print(f"[INFO] Closed {closed} Roblox process(es) from the panel.")
         QTimer.singleShot(400, self._refresh)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() <= 34:
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and not self._drag_offset.isNull()
+        ):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = QPoint()
+        super().mouseReleaseEvent(event)
+
     def closeEvent(self, event):
         self._timer.stop()
         super().closeEvent(event)
@@ -9434,7 +9756,7 @@ class _PasswordDialog(QDialog):
         self.password_value = ""
         self.setWindowTitle("Password Required")
         self.setFixedSize(360, 130)
-        self.setStyleSheet(_DLG_STYLE)
+        self.setStyleSheet(_dlg_style())
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.MSWindowsFixedSizeDialogHint)
 
         lay = QVBoxLayout(self)

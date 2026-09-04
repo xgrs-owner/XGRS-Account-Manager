@@ -93,6 +93,32 @@ _ICON_BODIES: dict[str, str] = {
         '<circle cx="11" cy="11" r="8"/>'
         '<line x1="21" y1="21" x2="16.65" y2="16.65"/>'
     ),
+    "check": (
+        '<polyline points="20 6 9 17 4 12"/>'
+    ),
+    "key": (
+        '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777z'
+        'm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>'
+    ),
+    "user_plus": (
+        '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>'
+        '<circle cx="8.5" cy="7" r="4"/>'
+        '<line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>'
+    ),
+    "note": (
+        '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>'
+        '<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'
+    ),
+    "lock": (
+        '<rect x="3" y="11" width="18" height="11" rx="2"/>'
+        '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+    ),
+    "chevron_right": (
+        '<polyline points="9 18 15 12 9 6"/>'
+    ),
+    "chevron_down": (
+        '<polyline points="6 9 12 15 18 9"/>'
+    ),
     # Window controls
     "skull": (
         '<path d="M12 3c-4.4 0-8 3.4-8 7.6v3.3c0 .8.5 1.5 1.2 1.8l1 .4v3.6'

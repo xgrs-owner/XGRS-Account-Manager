@@ -569,6 +569,7 @@ class _AccountState:
         self.attempts = 0
         self.launching = False
         self.launch_started = 0.0
+        self.launch_token = 0
         self.log_path: str | None = None
         self.log_offset = 0
         self.log_pid: int | None = None
@@ -702,6 +703,7 @@ class AutoConnectSupervisor:
                 return
             state.enabled = False
             state.launching = False
+            state.launch_token += 1
             user_id = state.user_id
             pid = state.pid
             self._set_state(state, STATE_STOPPED, time.time())
@@ -754,6 +756,11 @@ class AutoConnectSupervisor:
 
         if not close_clients:
             return 0
+
+        with self._lock:
+            for state in self._states.values():
+                state.launch_token += 1
+                state.launching = False
 
         closed = close_all_roblox()
         self._pid_uid_cache.clear()
@@ -892,6 +899,19 @@ class AutoConnectSupervisor:
             state.log_offset = 0
             state.log_pid = None
             state.running_since = now if pid else 0.0
+
+        if not state.enabled:
+            if pid is None:
+                state.ram_mb = 0.0
+                state.cpu_percent = 0.0
+                state.in_game = False
+                state.ping_ms = None
+                state.ping_source = ""
+            else:
+                self._read_metrics(state, processes.get(pid))
+            state.launching = False
+            self._set_state(state, STATE_STOPPED, now)
+            return
 
         if pid is None:
             state.ram_mb = 0.0
@@ -1055,18 +1075,30 @@ class AutoConnectSupervisor:
         state.launching = True
         state.launch_started = now
         state.attempts += 1
+        state.launch_token += 1
         self._set_state(state, STATE_LAUNCHING, now)
 
         threading.Thread(
             target=self._launch_worker,
-            args=(state,),
+            args=(state, state.launch_token),
             daemon=True,
             name=f"AutoConnect-launch-{state.account}",
         ).start()
 
-    def _launch_worker(self, state: _AccountState) -> None:
+    def _launch_worker(self, state: _AccountState, token: int) -> None:
         config = state.config
+
+        def cancelled() -> bool:
+            return (
+                self._stop_event.is_set()
+                or not state.enabled
+                or state.launch_token != token
+            )
+
         try:
+            if cancelled():
+                state.launching = False
+                return
             if config.get("check_internet", True) and not has_internet():
                 print(f"[Auto Connect] [{state.account}] No internet, delaying launch.")
                 state.launching = False
@@ -1074,6 +1106,9 @@ class AutoConnectSupervisor:
                 return
 
             settings = actions.load_ui_settings()
+            if cancelled():
+                state.launching = False
+                return
             print(
                 f"[Auto Connect] [{state.account}] Launching "
                 f"(place {config.get('place_id') or 'from VIP link'}, "
@@ -1094,6 +1129,16 @@ class AutoConnectSupervisor:
                 state.state_since = time.time()
                 return
             state.last_error = ""
+            if cancelled():
+                state.launching = False
+                print(
+                    f"[Auto Connect] [{state.account}] Launch cancelled, "
+                    "closing the client that just started."
+                )
+                self._stop_event.wait(3.0)
+                self._force_close(state.account)
+                state.state = STATE_STOPPED
+                state.state_since = time.time()
         except Exception as exc:
             state.last_error = f"{type(exc).__name__}: {exc}"
             print(f"[Auto Connect] [{state.account}] Launch error: {state.last_error}")
