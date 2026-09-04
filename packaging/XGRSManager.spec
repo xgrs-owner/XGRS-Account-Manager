@@ -6,7 +6,14 @@ from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
 
-PROJECT_ROOT = Path(SPECPATH).parent.parent
+def _find_project_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
+PROJECT_ROOT = _find_project_root(Path(SPECPATH).resolve())
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ASSETS_ROOT = PROJECT_ROOT / "assets"
 VERSION_INFO_PATH = PROJECT_ROOT / "build" / "version_info.txt"
@@ -27,6 +34,7 @@ hiddenimports = [
     "msvcrt",
     "psutil",
     "websockets",
+    "PySide6.QtSvg",
 ]
 
 selenium_data, selenium_binaries, selenium_imports = collect_all("selenium")
@@ -56,7 +64,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="EvanovarRAM",
+    name="XGRS Manager",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

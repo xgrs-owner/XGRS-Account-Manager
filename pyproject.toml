@@ -1,7 +1,7 @@
 [project]
-name = "evanovar-ram"
+name = "xgrs-account-manager"
 dynamic = ["version"]
-description = "A Windows desktop application for managing multiple Roblox accounts."
+description = "A Windows desktop application for managing multiple Roblox accounts, with Auto Connect keeping one client alive per account."
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [

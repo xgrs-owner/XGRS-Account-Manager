@@ -1111,26 +1111,14 @@ class RobloxAccountManager:
                 hook_result = self._pre_launch_hook()
                 if hook_result is not None and not hook_result:
                     print(
-                        f"[ERROR] Pre-launch settings apply failed: "
+                        f"[WARNING] Pre-launch settings apply failed (proceeding with launch): "
                         f"{getattr(hook_result, 'code', 'UNKNOWN_ERROR')} "
                         f"{getattr(hook_result, 'message', hook_result)}"
                     )
-                    if isinstance(hook_result, OperationResult):
-                        return hook_result
-                    return OperationResult.failure(
-                        "ROBLOX_SETTINGS_PRE_LAUNCH_FAILED",
-                        "Roblox Settings Could Not Be Applied",
-                        "Roblox was not launched because its settings could not be applied.",
-                        detail=str(hook_result),
-                    )
             except Exception as exc:
                 print(
-                    f"[ERROR] Pre-launch settings apply failed: "
+                    f"[WARNING] Pre-launch settings apply failed (proceeding with launch): "
                     f"{type(exc).__name__}: {exc}"
-                )
-                return unexpected_result(
-                    "Applying Roblox settings before launch",
-                    exc,
                 )
 
         cookie = self.accounts[username]['cookie']

@@ -11,10 +11,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ASSETS_ROOT = PROJECT_ROOT / "assets"
-SPEC_PATH = PROJECT_ROOT / "packaging" / "EvanovarRAM.spec"
+SPEC_PATH = PROJECT_ROOT / "packaging" / "XGRSManager.spec"
 VERSION_MODULE_PATH = SOURCE_ROOT / "utils" / "version.py"
 VERSION_INFO_PATH = PROJECT_ROOT / "build" / "version_info.txt"
-OUTPUT_PATH = PROJECT_ROOT / "dist" / "EvanovarRAM.exe"
+OUTPUT_PATH = PROJECT_ROOT / "dist" / "XGRS Manager.exe"
 
 _VERSION_ASSIGNMENT = re.compile(
     r'^\s*APP_VERSION\s*=\s*["\']([^"\']+)["\']\s*$'
@@ -59,13 +59,13 @@ def generate_version_info(version: str) -> None:
         "      [",
         "      StringTable(",
         "        u'040904B0',",
-        "        [StringStruct(u'CompanyName', u'evanovar'),",
-        "        StringStruct(u'FileDescription', u'Evanovar RAM'),",
+        "        [StringStruct(u'CompanyName', u'XGRS'),",
+        "        StringStruct(u'FileDescription', u'XGRS Account Manager'),",
         f"        StringStruct(u'FileVersion', u'{windows_version}'),",
-        "        StringStruct(u'InternalName', u'EvanovarRAM'),",
-        "        StringStruct(u'LegalCopyright', u'Copyright (C) evanovar'),",
-        "        StringStruct(u'OriginalFilename', u'EvanovarRAM.exe'),",
-        "        StringStruct(u'ProductName', u'Evanovar RAM'),",
+        "        StringStruct(u'InternalName', u'XGRS Manager'),",
+        "        StringStruct(u'LegalCopyright', u'Copyright (C) XGRS'),",
+        "        StringStruct(u'OriginalFilename', u'XGRS Manager.exe'),",
+        "        StringStruct(u'ProductName', u'XGRS Account Manager'),",
         f"        StringStruct(u'ProductVersion', u'{windows_version}')])",
         "      ]),",
         "    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])",
@@ -105,7 +105,7 @@ def validate_release_tag(version: str) -> bool:
 
 
 def create_release_asset(version: str) -> Path:
-    release_path = PROJECT_ROOT / "dist" / f"EvanovarRAM-v{version}.exe"
+    release_path = PROJECT_ROOT / "dist" / f"XGRS Manager-v{version}.exe"
     shutil.copy2(OUTPUT_PATH, release_path)
     return release_path
 
@@ -120,7 +120,7 @@ def main() -> int:
         print(f"[ERROR] Build preparation failed: {exc}")
         return 1
 
-    print(f"[INFO] Building Evanovar RAM {version}")
+    print(f"[INFO] Building XGRS Account Manager {version}")
     result = subprocess.run(
         [
             sys.executable,

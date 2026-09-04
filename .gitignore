@@ -15,12 +15,15 @@ ENV/
 build/
 dist/
 *.spec
-!packaging/EvanovarRAM.spec
+!packaging/XGRSManager.spec
 *.spec.log
 
 # Account data (SENSITIVE - DO NOT COMMIT!)
 saved_accounts.json
 AccountManagerData/
+avatar_cache/
+auto_rejoin.json
+auto_connect.json
 
 # IDE and editor files
 .vscode/
@@ -58,3 +61,12 @@ AGENTS.md
 .agents/
 tests/
 PLAN.md
+
+# Local build output and credentials
+XGRS Manager.exe
+.github_token
+*.ps1
+*.bat
+
+# Upstream sources kept for merging
+new*.*.*/

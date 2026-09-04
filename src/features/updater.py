@@ -19,14 +19,15 @@ import requests
 
 from utils.app_paths import get_data_dir
 
-GITHUB_API = "https://api.github.com/repos/evanovar/RobloxAccountManager/releases/latest"
-RELEASES_PAGE = "https://github.com/evanovar/RobloxAccountManager/releases/latest"
+GITHUB_API = "https://api.github.com/repos/xgrs-owner/XGRS-Account-Manager/releases/latest"
+RELEASES_PAGE = "https://github.com/xgrs-owner/XGRS-Account-Manager/releases/latest"
 RELEASE_ASSET_PATTERN = re.compile(
-    r"^EvanovarRAM-v\d+\.\d+\.\d+(?:\.\d+)?\.exe$",
+    r"^XGRS[ ._]Manager-v\d+\.\d+\.\d+(?:\.\d+)?\.exe$",
     re.IGNORECASE,
 )
 LEGACY_ASSET_NAMES = (
-    "EvanovarRAM.exe",
+    "XGRS Manager.exe",
+    "XGRS.Manager.exe",
     "RobloxAccountManager.exe",
 )
 PROCESS_WAIT_SECONDS = 120
@@ -64,23 +65,20 @@ def get_exe_download_url() -> tuple[str, str] | None:
     try:
         response = requests.get(GITHUB_API, timeout=8)
         response.raise_for_status()
-        release = response.json()
         assets = [
             asset
-            for asset in release.get("assets", [])
+            for asset in response.json().get("assets", [])
             if str(asset.get("name", "")).lower().endswith(".exe")
             and asset.get("browser_download_url")
         ]
-        release_tag = str(release.get("tag_name", "")).strip()
-        if release_tag and not release_tag.lower().startswith("v"):
-            release_tag = f"v{release_tag}"
-        expected_name = f"EvanovarRAM-{release_tag}.exe" if release_tag else ""
         preferred = next(
             (
                 asset
                 for asset in assets
-                if expected_name
-                and asset["name"].lower() == expected_name.lower()
+                if RELEASE_ASSET_PATTERN.match(asset["name"])
+                or asset["name"].lower() in {
+                    name.lower() for name in LEGACY_ASSET_NAMES
+                }
             ),
             None,
         )
@@ -88,16 +86,7 @@ def get_exe_download_url() -> tuple[str, str] | None:
             (
                 asset
                 for asset in assets
-                if RELEASE_ASSET_PATTERN.fullmatch(asset["name"])
-            ),
-            None,
-        )
-        selected = selected or next(
-            (
-                asset
-                for asset in assets
-                if asset["name"].lower()
-                in {name.lower() for name in LEGACY_ASSET_NAMES}
+                if "robloxaccountmanager" in asset["name"].lower()
             ),
             None,
         )
@@ -182,7 +171,7 @@ try {{
     Remove-Item -LiteralPath $UpdateDirectory -Force -ErrorAction SilentlyContinue
     exit 0
 }} catch {{
-    $detail = "Evanovar RAM automatic update failed.`r`n"
+    $detail = "XGRS Account Manager automatic update failed.`r`n"
     $detail += "Timestamp: $([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))`r`n"
     $detail += "Destination: $DestinationPath`r`n"
     $detail += "Error: $($_.Exception.Message)"
@@ -248,14 +237,14 @@ def download_update(
             on_progress(0)
             result = get_exe_download_url()
             if not result:
-                on_done(False, "No Evanovar RAM executable was found in the latest release.")
+                on_done(False, "No Roblox Account Manager executable was found in the latest release.")
                 return
 
             url, filename = result
             print(f"[INFO] Downloading {filename} from {url}")
             on_progress(2)
 
-            update_directory = tempfile.mkdtemp(prefix="evanovar_ram_update_")
+            update_directory = tempfile.mkdtemp(prefix="xgrs_ram_update_")
             source_path = os.path.join(update_directory, "update.exe")
 
             response = requests.get(url, stream=True, timeout=60)

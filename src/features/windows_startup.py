@@ -12,7 +12,8 @@ from classes.operation_result import OperationResult, unexpected_result
 from utils.app_paths import get_app_dir, get_data_dir, get_resource_path
 
 
-_SHORTCUT_NAME = "Evanovar RAM.lnk"
+_SHORTCUT_NAME = "XGRS Account Manager.lnk"
+_LEGACY_SHORTCUT_NAMES = ("Evanovar RAM.lnk",)
 
 
 def get_startup_folder() -> str:
@@ -34,9 +35,31 @@ def get_shortcut_path() -> str:
     return os.path.join(startup_folder, _SHORTCUT_NAME) if startup_folder else ""
 
 
+def _remove_legacy_shortcuts() -> None:
+    """Drop shortcuts created before the app was renamed."""
+    startup_folder = get_startup_folder()
+    if not startup_folder:
+        return
+    for name in _LEGACY_SHORTCUT_NAMES:
+        legacy_path = os.path.join(startup_folder, name)
+        try:
+            if os.path.isfile(legacy_path):
+                os.remove(legacy_path)
+        except OSError:
+            pass
+
+
 def is_startup_enabled() -> bool:
     shortcut_path = get_shortcut_path()
-    return bool(shortcut_path and os.path.isfile(shortcut_path))
+    if shortcut_path and os.path.isfile(shortcut_path):
+        return True
+    startup_folder = get_startup_folder()
+    if not startup_folder:
+        return False
+    return any(
+        os.path.isfile(os.path.join(startup_folder, name))
+        for name in _LEGACY_SHORTCUT_NAMES
+    )
 
 
 def _powershell_quote(value: str) -> str:
@@ -113,13 +136,14 @@ def _run_powershell(script: str) -> OperationResult:
         return OperationResult.failure(
             "STARTUP_SHORTCUT_CREATE_FAILED",
             "Startup Shortcut Could Not Be Created",
-            "Windows could not create the Evanovar RAM Startup shortcut.",
+            "Windows could not create the XGRS Account Manager Startup shortcut.",
             detail=detail or f"PowerShell exit code: {completed.returncode}",
         )
     return OperationResult.success()
 
 
 def enable_startup() -> OperationResult:
+    _remove_legacy_shortcuts()
     shortcut_path = get_shortcut_path()
     startup_folder = get_startup_folder()
     if not shortcut_path or not startup_folder:
@@ -149,7 +173,7 @@ def enable_startup() -> OperationResult:
             f"$shortcut.TargetPath = {_powershell_quote(details['target'])}; "
             f"$shortcut.Arguments = {_powershell_quote(details['arguments'])}; "
             f"$shortcut.WorkingDirectory = {_powershell_quote(details['working_directory'])}; "
-            f"$shortcut.Description = {_powershell_quote('Start Evanovar RAM with Windows')}; "
+            f"$shortcut.Description = {_powershell_quote('Start XGRS Account Manager with Windows')}; "
             f"$shortcut.IconLocation = {_powershell_quote(icon_location)}; "
             "$shortcut.Save();"
         )
@@ -164,14 +188,15 @@ def enable_startup() -> OperationResult:
                 detail=f"Shortcut: {shortcut_path}",
             )
         return OperationResult.success(
-            "Evanovar RAM will start with Windows.",
+            "XGRS Account Manager will start with Windows.",
             data={"shortcut_path": shortcut_path},
         )
     except Exception as exc:
-        return unexpected_result("Enabling Evanovar RAM at Windows startup", exc)
+        return unexpected_result("Enabling XGRS Account Manager at Windows startup", exc)
 
 
 def disable_startup() -> OperationResult:
+    _remove_legacy_shortcuts()
     shortcut_path = get_shortcut_path()
     if not shortcut_path:
         return OperationResult.failure(
@@ -187,17 +212,17 @@ def disable_startup() -> OperationResult:
             return OperationResult.failure(
                 "STARTUP_SHORTCUT_REMOVE_FAILED",
                 "Startup Shortcut Could Not Be Removed",
-                "Windows did not remove the Evanovar RAM Startup shortcut.",
+                "Windows did not remove the XGRS Account Manager Startup shortcut.",
                 detail=f"Shortcut: {shortcut_path}",
             )
         return OperationResult.success(
-            "Evanovar RAM will no longer start with Windows.",
+            "XGRS Account Manager will no longer start with Windows.",
             data={"shortcut_path": shortcut_path},
         )
     except Exception as exc:
         return OperationResult.failure(
             "STARTUP_SHORTCUT_REMOVE_FAILED",
             "Startup Shortcut Could Not Be Removed",
-            "The Evanovar RAM Startup shortcut could not be removed.",
+            "The XGRS Account Manager Startup shortcut could not be removed.",
             detail=f"{type(exc).__name__}: {exc}",
         )

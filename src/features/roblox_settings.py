@@ -807,17 +807,50 @@ def _resolve_path(root: ET.Element, path: tuple[int, ...]) -> ET.Element | None:
 
 
 def _set_writable(path: Path) -> None:
-    os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    try:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), 0x80)  # FILE_ATTRIBUTE_NORMAL
+        except Exception:
+            pass
 
 
 def _set_read_only(path: Path, read_only: bool) -> None:
-    os.chmod(path, stat.S_IREAD if read_only else stat.S_IREAD | stat.S_IWRITE)
+    try:
+        os.chmod(path, stat.S_IREAD if read_only else stat.S_IREAD | stat.S_IWRITE)
+    except Exception:
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes
+            attrs = 0x01 if read_only else 0x80  # FILE_ATTRIBUTE_READONLY vs FILE_ATTRIBUTE_NORMAL
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), attrs)
+        except Exception:
+            pass
 
 
 def _restore_backup(path: Path, backup_path: Path, original_read_only: bool) -> None:
     if backup_path.is_file():
         _set_writable(path)
-        shutil.copy2(backup_path, path)
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+        try:
+            path.write_bytes(backup_path.read_bytes())
+        except Exception:
+            try:
+                shutil.copyfile(backup_path, path)
+            except Exception:
+                try:
+                    shutil.copy2(backup_path, path)
+                except Exception:
+                    pass
     _set_read_only(path, original_read_only)
 
 
@@ -884,15 +917,25 @@ def apply_settings(
 
             original_read_only = not bool(os.stat(path).st_mode & stat.S_IWRITE)
             if normalized_changes:
+                if backup_path.exists():
+                    _set_writable(backup_path)
+                    try:
+                        backup_path.unlink()
+                    except Exception:
+                        pass
                 try:
-                    shutil.copy2(path, backup_path)
-                except OSError as exc:
-                    return OperationResult.failure(
-                        "ROBLOX_SETTINGS_BACKUP_FAILED",
-                        "Roblox Settings Backup Failed",
-                        "A backup of the Roblox settings file could not be created.",
-                        detail=f"Path: {path}\n{type(exc).__name__}: {exc}",
-                    )
+                    backup_path.write_bytes(path.read_bytes())
+                    _set_writable(backup_path)
+                except Exception:
+                    try:
+                        shutil.copyfile(path, backup_path)
+                        _set_writable(backup_path)
+                    except Exception:
+                        try:
+                            shutil.copy2(path, backup_path)
+                            _set_writable(backup_path)
+                        except OSError as exc:
+                            print(f"[WARNING] Roblox settings backup failed: {exc}")
                 _set_writable(path)
                 for key, value in normalized_changes.items():
                     element = _resolve_path(properties, tuple(by_key[key].path))
