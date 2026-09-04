@@ -1087,6 +1087,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             QLabel#settingsHint {{
                 color: {MUTED}; font-size: 10px; background: transparent;
             }}
+            QFrame#customBrowserPanel QLineEdit:disabled,
+            QFrame#customBrowserPanel QComboBox:disabled,
+            QFrame#customBrowserPanel QPushButton:disabled {{
+                color: #5A5A5A; border: 1px solid {LINE}; background: {BG};
+            }}
 
             QListWidget {{
                 background: {INPUT}; border: 1px solid {LINE};
@@ -2333,10 +2338,81 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         lay.addLayout(form)
         lay.addStretch(1)
+        lay.addWidget(self._build_mr_help_panel(), 1)
 
         # Load saved state
         self._load_mr_settings()
         return panel
+
+    def _build_mr_help_panel(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(150)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        frame = QFrame()
+        frame.setObjectName("mrHelpPanel")
+        frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        frame.setStyleSheet(f"""
+            QFrame#mrHelpPanel {{
+                background: {PANEL};
+                border: 1px solid {LINE};
+                border-radius: 6px;
+            }}
+            QFrame#mrHelpPanel QLabel {{ background: transparent; border: none; }}
+        """)
+
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(12, 10, 12, 12)
+        inner.setSpacing(3)
+
+        header = QLabel("HOW THE MODES WORK")
+        header.setStyleSheet(
+            f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;"
+        )
+        inner.addWidget(header)
+
+        sections = [
+            ("Default (mutex)",
+             "The manager creates the Roblox singleton objects itself "
+             "(ROBLOX_SingletonEvent, ROBLOX_singletonEvent, ROBLOX_singletonMutex) "
+             "and keeps holding them. Every client that starts afterwards sees the "
+             "singleton as already taken, so it no longer shuts down the client that "
+             "is already open. The Error 773 cookie lock fix is applied at the same "
+             "time. No administrator rights and no extra files are needed. Two "
+             "conditions: Roblox must be fully closed at the moment you switch it on, "
+             "and the manager has to stay running, because it is the one holding the "
+             "handles."),
+            ("Handle64 (Sysinternals)",
+             "The manager runs handle64.exe in a background loop, finds the singleton "
+             "handle inside every running RobloxPlayerBeta.exe and closes it. Because "
+             "it works after the fact, it also unlocks clients that are already open, "
+             "so you do not have to close Roblox first. The price is administrator "
+             "rights, the handle64.exe download from Microsoft, and a scan that keeps "
+             "running while the mode is on."),
+            ("Which one to pick",
+             "Start with Default. It is lighter, asks for no rights, downloads "
+             "nothing and covers the normal case where you launch every client from "
+             "the manager. Switch to Handle64 only if Default stops working after a "
+             "Roblox update, or if you need to unlock clients that are already "
+             "running."),
+        ]
+        for caption, body in sections:
+            title = QLabel(caption)
+            title.setStyleSheet(f"color: {TEXT}; font-size: 11px; font-weight: 700;")
+            title.setContentsMargins(0, 6, 0, 0)
+            inner.addWidget(title)
+
+            paragraph = QLabel(body)
+            paragraph.setWordWrap(True)
+            paragraph.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+            inner.addWidget(paragraph)
+
+        inner.addStretch(1)
+        scroll.setWidget(frame)
+        return scroll
 
     def _is_admin(self) -> bool:
         try:
@@ -3975,8 +4051,13 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             )
             f.addWidget(rb)
 
-        custom_row = QHBoxLayout()
-        custom_row.setContentsMargins(20, 0, 0, 0)
+        self._sett_custom_browser_panel = QFrame()
+        self._sett_custom_browser_panel.setObjectName("customBrowserPanel")
+        self._sett_custom_browser_panel.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+        custom_row = QHBoxLayout(self._sett_custom_browser_panel)
+        custom_row.setContentsMargins(8, 7, 8, 7)
         custom_row.setSpacing(6)
         self._sett_custom_browser_edit = QLineEdit()
         self._sett_custom_browser_edit.setPlaceholderText("Path to the browser executable")
@@ -4014,7 +4095,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             )
         )
         custom_row.addWidget(self._sett_custom_browser_engine)
-        f.addLayout(custom_row)
+        f.addLayout(_sub_indent(self._sett_custom_browser_panel))
         self._update_custom_browser_row(_cur_br)
 
         _chromium_installed = bool(chromium_mod.validate_chromium())
@@ -6239,14 +6320,24 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._update_custom_browser_row(browser_key)
 
     def _update_custom_browser_row(self, browser_key: str) -> None:
+        panel = getattr(self, "_sett_custom_browser_panel", None)
+        if panel is None:
+            return
         enabled = browser_key == "custom"
+        panel.setEnabled(enabled)
+        panel.setStyleSheet(f"""
+            QFrame#customBrowserPanel {{
+                background: {PANEL if enabled else BG};
+                border: 1px solid {FG_ACCENT if enabled else LINE};
+                border-radius: 5px;
+            }}
+        """)
         for widget in (
-            getattr(self, "_sett_custom_browser_edit", None),
-            getattr(self, "_sett_custom_browser_btn", None),
-            getattr(self, "_sett_custom_browser_engine", None),
+            self._sett_custom_browser_edit,
+            self._sett_custom_browser_btn,
+            self._sett_custom_browser_engine,
         ):
-            if widget is not None:
-                widget.setEnabled(enabled)
+            widget.setEnabled(enabled)
 
     def _on_sett_browse_custom_browser(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

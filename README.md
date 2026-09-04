@@ -28,7 +28,8 @@ Sends key presses to every Roblox window on a timer so accounts are not kicked.
 
 **Multi Roblox**
 Runs several Roblox clients side by side, with a window grid hotkey and a headless
-mode that hides client windows.
+mode that hides client windows. The tab explains what the Default and Handle64
+methods actually do and which one to pick.
 
 **Kill switch**
 The skull in the title bar closes every Roblox process instantly on left click.
