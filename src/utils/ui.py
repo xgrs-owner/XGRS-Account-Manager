@@ -1827,7 +1827,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         ttl.setObjectName("sectionTitle")
         hdr.addWidget(ttl)
         hdr.addStretch(1)
-        hint = QLabel("Right-click for actions")
+        hint = QLabel("Ctrl / Shift to select several, right-click for actions")
         hint.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
         hdr.addWidget(hint)
         lay.addLayout(hdr)
@@ -1897,6 +1897,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         lay.addWidget(desc)
 
         self._ac_list = QListWidget()
+        self._ac_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._ac_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._ac_list.customContextMenuRequested.connect(self._ac_on_context_menu)
         lay.addWidget(self._ac_list, 1)
@@ -6539,6 +6540,22 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             return None
         return item.data(Qt.ItemDataRole.UserRole)
 
+    def _ac_selected_accounts(self) -> list[str]:
+        if self._ac_list is None:
+            return []
+        accounts: list[str] = []
+        for item in self._ac_list.selectedItems():
+            if item.data(Qt.ItemDataRole.UserRole + 1) != "row":
+                continue
+            account = item.data(Qt.ItemDataRole.UserRole)
+            if account and account not in accounts:
+                accounts.append(account)
+        if not accounts:
+            single = self._ac_selected_account()
+            if single:
+                accounts.append(single)
+        return [account for account in accounts if account in self._ac_configs]
+
     def _ac_on_context_menu(self, pos):
         item = self._ac_list.itemAt(pos)
         if item is None:
@@ -6547,10 +6564,18 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if not account:
             return
 
-        self._ac_list.setCurrentItem(item)
-        active = self._ac_supervisor.is_account_enabled(account)
+        if not item.isSelected():
+            self._ac_list.setCurrentItem(item)
+        selection = self._ac_selected_accounts()
+        active = any(
+            self._ac_supervisor.is_account_enabled(name) for name in selection
+        )
 
         menu = QMenu(self)
+        if len(selection) > 1:
+            header = menu.addAction(f"{len(selection)} accounts selected")
+            header.setEnabled(False)
+            menu.addSeparator()
         act_start = menu.addAction("Start") if not active else None
         act_stop = menu.addAction("Stop") if active else None
         act_restart = menu.addAction("Restart Client")
@@ -6580,15 +6605,14 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_refresh_list()
 
     def _ac_on_edit(self):
-        account = self._ac_selected_account()
-        if not account:
+        accounts = self._ac_selected_accounts()
+        if not accounts:
             _show_error(self, "No Selection", "Select an account to edit.")
             return
-        cfg = self._ac_configs.get(account)
-        if not cfg:
-            return
         win = _AutoConnectAddWindow(
-            self.manager, self, edit_account=account, edit_config=cfg,
+            self.manager, self,
+            edit_account=accounts,
+            edit_config=self._ac_configs[accounts[0]],
         )
         if win.exec() != QDialog.DialogCode.Accepted:
             return
@@ -6596,33 +6620,38 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             self._ac_configs[edited_account] = config
         self._ac_save_configs()
         self._ac_refresh_list()
+        if len(accounts) > 1:
+            print(f"[INFO] Auto Connect settings applied to {len(accounts)} accounts.")
 
     def _ac_save_configs(self):
         ac.save_configs(self._ac_configs)
         self._ac_supervisor.set_configs(self._ac_configs)
 
     def _ac_on_start(self):
-        account = self._ac_selected_account()
-        if not account:
+        accounts = self._ac_selected_accounts()
+        if not accounts:
             _show_error(self, "No Selection", "Select an account to start.")
             return
-        self._ac_supervisor.enable_account(account)
+        for account in accounts:
+            self._ac_supervisor.enable_account(account)
         self._ac_refresh_list()
 
     def _ac_on_stop(self):
-        account = self._ac_selected_account()
-        if not account:
+        accounts = self._ac_selected_accounts()
+        if not accounts:
             _show_error(self, "No Selection", "Select an account to stop.")
             return
-        self._ac_supervisor.disable_account(account, close_client=True)
+        for account in accounts:
+            self._ac_supervisor.disable_account(account, close_client=True)
         self._ac_refresh_list()
 
     def _ac_on_restart(self):
-        account = self._ac_selected_account()
-        if not account:
+        accounts = self._ac_selected_accounts()
+        if not accounts:
             _show_error(self, "No Selection", "Select an account to restart.")
             return
-        self._ac_supervisor.restart_account(account)
+        for account in accounts:
+            self._ac_supervisor.restart_account(account)
         self._ac_refresh_list()
 
     def _ac_on_start_all(self):
@@ -6639,20 +6668,28 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             print(f"[INFO] Stop All closed {closed} Roblox process(es).")
 
     def _ac_on_remove(self):
-        account = self._ac_selected_account()
-        if not account:
+        accounts = self._ac_selected_accounts()
+        if not accounts:
             _show_error(self, "No Selection", "Select an account to remove.")
             return
+        if len(accounts) == 1:
+            question = f"Remove '{accounts[0]}' from Auto Connect?"
+        else:
+            preview = ", ".join(accounts[:5])
+            if len(accounts) > 5:
+                preview += f" (+{len(accounts) - 5} more)"
+            question = f"Remove {len(accounts)} accounts from Auto Connect?\n{preview}"
         reply = QMessageBox.question(
-            self, "Remove Auto Connect",
-            f"Remove '{account}' from Auto Connect?",
+            self, "Remove Auto Connect", question,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._ac_supervisor.disable_account(account, close_client=True)
-        self._ac_configs.pop(account, None)
-        self._ac_snapshot.pop(account, None)
+        for account in accounts:
+            self._ac_supervisor.disable_account(account, close_client=True)
+            self._ac_configs.pop(account, None)
+            self._ac_snapshot.pop(account, None)
+            self._ac_expanded.discard(account)
         self._ac_save_configs()
         self._ac_refresh_list()
 
@@ -9133,8 +9170,12 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         super().__init__(parent)
         self.manager = manager
         self.result_configs: dict = {}
-        self._edit_mode = edit_account is not None
-        self._edit_account = edit_account
+        self._edit_accounts = (
+            list(edit_account)
+            if isinstance(edit_account, (list, tuple, set))
+            else ([edit_account] if edit_account else [])
+        )
+        self._edit_mode = bool(self._edit_accounts)
         self._edit_config = ac.normalize_config(edit_config or {})
         self._current_group: str | None = None
         self._columns = 0
@@ -9142,7 +9183,12 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         self._option_blocks: list[QWidget] = []
         self._drag_offset = QPoint()
 
-        title = "Edit Auto Connect" if self._edit_mode else "Add Account to Auto Connect"
+        if not self._edit_mode:
+            title = "Add Account to Auto Connect"
+        elif len(self._edit_accounts) > 1:
+            title = f"Edit {len(self._edit_accounts)} Accounts"
+        else:
+            title = f"Edit {self._edit_accounts[0]}"
         self.setWindowTitle(title)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(320, 430)
@@ -9243,9 +9289,13 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         self._build_fields()
         self._build_options()
 
-        self._save_btn = QPushButton(
-            "  Save Changes" if self._edit_mode else "  Add Account"
-        )
+        if not self._edit_mode:
+            save_caption = "  Add Account"
+        elif len(self._edit_accounts) > 1:
+            save_caption = f"  Apply To {len(self._edit_accounts)} Accounts"
+        else:
+            save_caption = "  Save Changes"
+        self._save_btn = QPushButton(save_caption)
         self._save_btn.setIcon(icons_mod.get_icon("check", TEXT, 13, 2.2))
         self._save_btn.setIconSize(QSize(13, 13))
         self._save_btn.setFixedHeight(32)
@@ -9438,7 +9488,14 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
 
     def _apply_edit_mode(self):
         self._left_widget.hide()
-        self._hint_label.hide()
+        if len(self._edit_accounts) > 1:
+            preview = ", ".join(self._edit_accounts[:6])
+            if len(self._edit_accounts) > 6:
+                preview += f" (+{len(self._edit_accounts) - 6} more)"
+            self._hint_label.setText(f"These settings will be applied to: {preview}")
+            self._hint_label.setWordWrap(True)
+        else:
+            self._hint_label.hide()
 
         cfg = self._edit_config
         self._place.setText(cfg.get("place_id", ""))
@@ -9486,7 +9543,8 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         })
 
         if self._edit_mode:
-            self.result_configs[self._edit_account] = cfg
+            for account in self._edit_accounts:
+                self.result_configs[account] = cfg.copy()
             self.accept()
             return
 
