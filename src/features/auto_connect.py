@@ -501,6 +501,53 @@ def close_all_roblox(include_bootstrapper: bool = True) -> int:
     return len(victims)
 
 
+def list_roblox_processes(manager=None) -> list[dict]:
+    targets = ROBLOX_PROCESS_NAMES | BOOTSTRAPPER_NAMES | get_configured_launcher_names()
+    uid_to_name: dict[str, str] = {}
+    if manager is not None:
+        for username, data in list(getattr(manager, "accounts", {}).items()):
+            if isinstance(data, dict):
+                user_id = str(data.get("user_id", "") or "")
+                if user_id and user_id != "0":
+                    uid_to_name[user_id] = username
+
+    used_logs: set[str] = set()
+    now = time.time()
+    rows: list[dict] = []
+    for process in psutil.process_iter(["pid", "name", "create_time"]):
+        try:
+            raw_name = process.info.get("name") or ""
+        except (psutil.Error, OSError):
+            continue
+        if raw_name.lower() not in targets:
+            continue
+
+        pid = int(process.info["pid"])
+        created = float(process.info.get("create_time") or now)
+        try:
+            ram_mb = process.memory_info().rss / 1024 / 1024
+        except (psutil.Error, OSError):
+            ram_mb = 0.0
+
+        is_client = raw_name.lower() == "robloxplayerbeta.exe"
+        account = ""
+        if is_client and uid_to_name:
+            user_id = presence_mod._get_user_id_from_pid(pid, used_logs)
+            account = uid_to_name.get(str(user_id or ""), "")
+
+        rows.append({
+            "pid": pid,
+            "name": raw_name,
+            "account": account,
+            "ram_mb": ram_mb,
+            "uptime_seconds": max(0.0, now - created),
+            "is_client": is_client,
+        })
+
+    rows.sort(key=lambda row: (not row["is_client"], row["pid"]))
+    return rows
+
+
 class _AccountState:
     """Everything Auto Connect knows about one monitored account."""
 
@@ -565,7 +612,7 @@ class AutoConnectSupervisor:
     ):
         self._manager = manager
         self._on_update = on_update
-        self._interval = max(2.0, float(interval_sec))
+        self._interval = max(1.0, float(interval_sec))
         self._states: dict[str, _AccountState] = {}
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -574,6 +621,9 @@ class AutoConnectSupervisor:
         self._pid_uid_cache: dict[int, tuple[float, str]] = {}
         self._cpu_count = max(1, psutil.cpu_count() or 1)
         self._presence_interval = 20.0
+
+    def set_interval(self, seconds: float) -> None:
+        self._interval = max(1.0, float(seconds))
 
     # Lifecycle
 

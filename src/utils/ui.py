@@ -826,6 +826,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_supervisor = ac.AutoConnectSupervisor(
             self.manager,
             on_update=lambda snapshot: self._bridge.auto_connect_update.emit(snapshot),
+            interval_sec=float(actions.load_ui_settings().get("auto_connect_interval", 4)),
         )
         self._ac_supervisor.set_configs(self._ac_configs)
         self._headless_manager: headless_manager_mod.HeadlessManager | None = None
@@ -963,6 +964,12 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 text-align: center; color: {MUTED}; font-size: 12px;
             }}
             QPushButton#closeButton:hover {{ background: #5A2A2A; color: #FFFFFF; }}
+
+            QPushButton#skullButton {{
+                background: transparent; border: 0;
+                min-height: 24px; min-width: 30px; padding: 0;
+            }}
+            QPushButton#skullButton:hover {{ background: #5A2A2A; }}
 
             QPushButton#navTab {{
                 background: transparent;
@@ -1176,6 +1183,22 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         icon_size = QSize(12, 12)
 
+        self._skull_btn = QPushButton()
+        self._skull_btn.setObjectName("skullButton")
+        self._skull_btn.setProperty("vectorIcon", "skull")
+        self._skull_btn.setIcon(icons_mod.get_icon("skull", MUTED, 14, 1.5))
+        self._skull_btn.setIconSize(QSize(14, 14))
+        self._skull_btn.setToolTip(
+            "Left click: close every Roblox process now.\n"
+            "Right click: pick which processes to close."
+        )
+        self._skull_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._skull_btn.customContextMenuRequested.connect(
+            lambda _pos: self._open_process_panel()
+        )
+        self._skull_btn.clicked.connect(self._on_skull_kill_all)
+        lay.addWidget(self._skull_btn)
+
         min_btn = QPushButton()
         min_btn.setObjectName("titleButton")
         min_btn.setProperty("vectorIcon", "minimize")
@@ -1202,6 +1225,28 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         lay.addWidget(close_btn)
 
         return bar
+
+    def _on_skull_kill_all(self) -> None:
+        closed = ac.close_all_roblox()
+        message = (
+            f"Closed {closed} Roblox process{'' if closed == 1 else 'es'}"
+            if closed else "No Roblox processes were running"
+        )
+        print(f"[INFO] {message}.")
+        self._show_skull_toast(message)
+
+    def _show_skull_toast(self, message: str) -> None:
+        tooltip = getattr(self, "_skull_toast", None)
+        if tooltip is None:
+            tooltip = _FloatingTooltip()
+            self._skull_toast = tooltip
+        point = self._skull_btn.mapToGlobal(QPoint(0, self._skull_btn.height() + 4))
+        tooltip.show_message(message, point.x() - 60, point.y())
+        QTimer.singleShot(2200, tooltip.hide)
+
+    def _open_process_panel(self) -> None:
+        panel = _RobloxProcessPanel(self.manager, self)
+        panel.exec()
 
     def _update_maximize_button(self) -> None:
         button = getattr(self, "_max_btn", None)
@@ -3727,6 +3772,36 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         sa, f = _scrollable()
         content_stack.addWidget(sa)
 
+        f.addWidget(_sec("AUTO CONNECT"))
+        ac_interval_row = QHBoxLayout()
+        ac_interval_lbl = QLabel("Status refresh")
+        ac_interval_lbl.setToolTip(
+            "How often Auto Connect rescans clients and repaints the rows.\n"
+            "Lower values react faster and use a little more CPU."
+        )
+        ac_interval_lbl.setStyleSheet(f"color: {TEXT}; font-size: 11px;")
+        ac_interval_row.addWidget(ac_interval_lbl)
+        ac_interval_row.addStretch(1)
+
+        self._sett_ac_interval_slider = QSlider(Qt.Orientation.Horizontal)
+        self._sett_ac_interval_slider.setRange(1, 15)
+        self._sett_ac_interval_slider.setValue(
+            max(1, min(15, int(S.get("auto_connect_interval", 4) or 4)))
+        )
+        self._sett_ac_interval_slider.setFixedWidth(160)
+        self._sett_ac_interval_slider.valueChanged.connect(
+            self._on_sett_auto_connect_interval
+        )
+        ac_interval_row.addWidget(self._sett_ac_interval_slider)
+
+        self._sett_ac_interval_label = QLabel(
+            f"{self._sett_ac_interval_slider.value()} s"
+        )
+        self._sett_ac_interval_label.setFixedWidth(36)
+        self._sett_ac_interval_label.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        ac_interval_row.addWidget(self._sett_ac_interval_label)
+        f.addLayout(ac_interval_row)
+
         f.addWidget(_sec("BROWSER ENGINE"))
         _br_lbl = QLabel(
             "Supported browsers: Chrome, Firefox, Edge, and built-in Chromium. "
@@ -5966,6 +6041,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             worker.stop()
         self._ar_workers.clear()
         self._ar_refresh_list()
+
+    def _on_sett_auto_connect_interval(self, value: int) -> None:
+        self._sett_ac_interval_label.setText(f"{value} s")
+        actions.save_ui_setting("auto_connect_interval", int(value))
+        self._ac_supervisor.set_interval(float(value))
 
     # Auto Connect list and actions
     def _start_auto_connect_autostart(self) -> None:
@@ -9035,6 +9115,184 @@ class _AutoConnectAddWindow(_AccountPickerMixin, QDialog):
         for account in selected:
             self.result_configs[account] = cfg.copy()
         self.accept()
+
+
+class _RobloxProcessPanel(QDialog):
+    def __init__(self, manager, parent=None):
+        super().__init__(parent)
+        self.manager = manager
+        self.setWindowTitle("Roblox Processes")
+        self.setFixedSize(460, 340)
+        self.setSizeGripEnabled(False)
+        self.setStyleSheet(_DLG_STYLE + f"""
+            QListWidget {{
+                background: {INPUT}; border: 1px solid {LINE};
+                font-size: 11px; color: {TEXT};
+            }}
+            QListWidget::item:selected {{ background: {SELECT}; }}
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("Roblox Processes")
+        title.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: bold;")
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
+        title_row.addWidget(self._count_label)
+        close_btn = QPushButton("\u2715")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; color: {MUTED}; font-size: 13px; }}"
+            f"QPushButton:hover {{ color: {TEXT}; }}"
+        )
+        close_btn.clicked.connect(self.reject)
+        title_row.addWidget(close_btn)
+        root.addLayout(title_row)
+
+        hint = QLabel(
+            "PID matches the identifier executors such as Potassium use. "
+            "Ctrl / Shift to select several."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {MUTED}; font-size: 9px;")
+        root.addWidget(hint)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(6, 0, 6, 0)
+        header.setSpacing(6)
+        for caption, width in (
+            ("PID", 52), ("Process", 132), ("Account", 96), ("RAM", 64), ("Up", 0),
+        ):
+            label = QLabel(caption)
+            label.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700;")
+            if width:
+                label.setFixedWidth(width)
+            header.addWidget(label)
+        header.addStretch(1)
+        root.addLayout(header)
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        root.addWidget(self._list, 1)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(6)
+        _BTN = f"QPushButton {{ text-align: center; color: {TEXT}; }}"
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(_BTN)
+        refresh_btn.clicked.connect(self._refresh)
+        buttons.addWidget(refresh_btn)
+        buttons.addStretch(1)
+
+        close_selected_btn = QPushButton("Close Selected")
+        close_selected_btn.setStyleSheet(_BTN)
+        close_selected_btn.clicked.connect(self._close_selected)
+        buttons.addWidget(close_selected_btn)
+
+        close_all_btn = QPushButton("Close All")
+        close_all_btn.setStyleSheet(
+            f"QPushButton {{ text-align: center; color: {TEXT}; }}"
+            f"QPushButton:hover {{ background: #5A2A2A; }}"
+        )
+        close_all_btn.clicked.connect(self._close_all)
+        buttons.addWidget(close_all_btn)
+        root.addLayout(buttons)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(2000)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start()
+
+        self._refresh()
+        if parent is not None:
+            geometry = parent.geometry()
+            self.move(
+                geometry.center().x() - self.width() // 2,
+                geometry.center().y() - self.height() // 2,
+            )
+
+    def _refresh(self) -> None:
+        selected = {
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self._list.selectedItems()
+        }
+        self._list.clear()
+
+        rows = ac.list_roblox_processes(self.manager)
+        clients = sum(1 for row in rows if row["is_client"])
+        self._count_label.setText(f"{clients} client(s) / {len(rows)} process(es)")
+
+        if not rows:
+            empty = QListWidgetItem("No Roblox processes are running.")
+            empty.setForeground(QColor(MUTED))
+            empty.setFlags(empty.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            self._list.addItem(empty)
+            return
+
+        for row in rows:
+            item = QListWidgetItem("")
+            item.setSizeHint(QSize(0, 22))
+            item.setData(Qt.ItemDataRole.UserRole, row["pid"])
+
+            widget = QWidget()
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(6, 0, 6, 0)
+            layout.setSpacing(6)
+
+            color = TEXT if row["is_client"] else MUTED
+            for value, width in (
+                (str(row["pid"]), 52),
+                (row["name"], 132),
+                (row["account"] or "-", 96),
+                (f"{row['ram_mb']:.0f} MB", 64),
+                (AccountManagerUIQt._format_duration(row["uptime_seconds"]), 0),
+            ):
+                label = QLabel(value)
+                label.setStyleSheet(f"color: {color}; font-size: 10px;")
+                if width:
+                    label.setFixedWidth(width)
+                layout.addWidget(label)
+            layout.addStretch(1)
+            widget.setFixedHeight(22)
+
+            self._list.addItem(item)
+            self._list.setItemWidget(item, widget)
+            if row["pid"] in selected:
+                item.setSelected(True)
+
+    def _close_selected(self) -> None:
+        pids = [
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self._list.selectedItems()
+            if item.data(Qt.ItemDataRole.UserRole) is not None
+        ]
+        if not pids:
+            QMessageBox.warning(self, "No Selection", "Select at least one process.")
+            return
+        for pid in pids:
+            ac.kill_pid(int(pid))
+        print(f"[INFO] Closed {len(pids)} Roblox process(es) from the panel.")
+        QTimer.singleShot(400, self._refresh)
+
+    def _close_all(self) -> None:
+        closed = ac.close_all_roblox()
+        print(f"[INFO] Closed {closed} Roblox process(es) from the panel.")
+        QTimer.singleShot(400, self._refresh)
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        super().closeEvent(event)
+
+    def reject(self):
+        self._timer.stop()
+        super().reject()
 
 
 # Tiny message helpers

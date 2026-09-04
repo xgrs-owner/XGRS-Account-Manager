@@ -27,6 +27,11 @@ Sends key presses to every Roblox window on a timer so accounts are not kicked.
 Runs several Roblox clients side by side, with a window grid hotkey and a headless
 mode that hides client windows.
 
+**Kill switch**
+The skull in the title bar closes every Roblox process instantly on left click.
+Right click opens a panel listing each process with its PID, account, RAM and
+uptime, so you can close them one by one.
+
 **Themes**
 Eight built-in palettes (Midnight, Carbon, Nord, Dracula, Ocean, Crimson, Forest,
 Light) plus a colour picker for every interface role, saved between runs.

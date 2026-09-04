@@ -94,6 +94,12 @@ _ICON_BODIES: dict[str, str] = {
         '<line x1="21" y1="21" x2="16.65" y2="16.65"/>'
     ),
     # Window controls
+    "skull": (
+        '<path d="M12 2a8 8 0 0 0-8 8v3.2a2 2 0 0 0 1.1 1.8L6 15.4V19a1 1 0 0 0 1 1h10'
+        'a1 1 0 0 0 1-1v-3.6l.9-.4a2 2 0 0 0 1.1-1.8V10a8 8 0 0 0-8-8z"/>'
+        '<circle cx="9" cy="10.5" r="1.6"/><circle cx="15" cy="10.5" r="1.6"/>'
+        '<path d="M10.5 15.5h3"/><path d="M10 20v-2"/><path d="M14 20v-2"/>'
+    ),
     "minimize": (
         '<line x1="5" y1="12" x2="19" y2="12"/>'
     ),
