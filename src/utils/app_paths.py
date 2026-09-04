@@ -31,5 +31,38 @@ def get_resource_path(*parts: str) -> str:
     return os.path.join(get_bundle_root(), *parts)
 
 
+DATA_DIR_NAME = "XGRSManagerData"
+LEGACY_DATA_DIR_NAMES = ("AccountManagerData",)
+
+_resolved_data_dir: str | None = None
+
+
+def _resolve_data_dir() -> str:
+    global _resolved_data_dir
+    if _resolved_data_dir is not None:
+        return _resolved_data_dir
+
+    root = get_project_root()
+    target = os.path.join(root, DATA_DIR_NAME)
+    if os.path.exists(target):
+        _resolved_data_dir = target
+        return target
+
+    for name in LEGACY_DATA_DIR_NAMES:
+        legacy = os.path.join(root, name)
+        if not os.path.isdir(legacy):
+            continue
+        try:
+            os.rename(legacy, target)
+            _resolved_data_dir = target
+        except OSError as exc:
+            print(f"[WARNING] Could not rename {name} to {DATA_DIR_NAME}: {exc}")
+            _resolved_data_dir = legacy
+        return _resolved_data_dir
+
+    _resolved_data_dir = target
+    return target
+
+
 def get_data_dir() -> str:
-    return os.path.join(get_project_root(), "AccountManagerData")
+    return _resolve_data_dir()

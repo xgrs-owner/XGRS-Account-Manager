@@ -306,7 +306,7 @@ def _handle_unhandled_exception(exception_type, exception, traceback_object) -> 
         traceback_object,
         fatal=True,
     )
-    location = crash_path or _SESSION_LOG_PATH or "AccountManagerData"
+    location = crash_path or _SESSION_LOG_PATH or "XGRSManagerData"
     show_native_error(
         "XGRS Account Manager Crashed",
         "The application encountered an unexpected error.\n\n"

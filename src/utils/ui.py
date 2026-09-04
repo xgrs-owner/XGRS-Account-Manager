@@ -579,6 +579,37 @@ class _FloatingTooltip(QWidget):
         self._update_timer.stop()
         super().hide()
 
+    def apply_palette_style(self):
+        self._label.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT};
+                background-color: {PANEL};
+                border: 1px solid {LINE};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+        """)
+
+    def show_static(self, message: str, x: int, y: int):
+        if not message:
+            self.hide()
+            return
+        self._update_timer.stop()
+        self.apply_palette_style()
+        self._label.setText(message)
+        self.adjustSize()
+        left = x - self.width() // 2
+        top = y
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.geometry()
+            left = max(geo.left() + 8, min(left, geo.right() - self.width() - 8))
+            top = max(geo.top() + 8, min(top, geo.bottom() - self.height() - 8))
+        self.move(left, top)
+        super().show()
+
     def _place_at(self, x: int, y: int):
         sx, sy = x + 20, y + 20
         screen = QApplication.primaryScreen()
@@ -992,6 +1023,29 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 padding: 4px 0 0 10px;
             }}
 
+            QFrame#settingsCatPanel {{
+                background: {BG}; border: 0; border-right: 1px solid {LINE};
+            }}
+            QWidget#settingsSearchBar {{
+                background: {BG}; border: 0; border-bottom: 1px solid {LINE};
+            }}
+            QWidget#settingsSearchBar QLabel {{ background: transparent; border: none; }}
+            QLineEdit#settingsSearchField {{
+                background: {INPUT}; border: 1px solid {LINE}; color: {TEXT};
+                padding: 3px 6px; font-size: 11px; border-radius: 4px;
+            }}
+            QLineEdit#settingsSearchField:focus {{ border: 1px solid {FG_ACCENT}; }}
+            QLabel#settingsSearchStatus {{
+                color: {MUTED}; font-size: 9px; background: transparent; border: none;
+            }}
+            QLabel#settingsSection {{
+                color: {MUTED}; font-size: 9px; font-weight: 700;
+                letter-spacing: 0.5px; margin-top: 8px; background: transparent;
+            }}
+            QLabel#settingsHint {{
+                color: {MUTED}; font-size: 10px; background: transparent;
+            }}
+
             QListWidget {{
                 background: {INPUT}; border: 1px solid {LINE};
                 outline: none; padding: 2px; font-size: 11px;
@@ -1228,11 +1282,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
     def _on_skull_kill_all(self) -> None:
         closed = ac.close_all_roblox()
-        message = (
-            f"Closed {closed} Roblox process{'' if closed == 1 else 'es'}"
-            if closed else "No Roblox processes were running"
-        )
-        print(f"[INFO] {message}.")
+        message = f"Closed: {closed} process{'' if closed == 1 else 'es'}"
+        print(f"[INFO] {message}")
         self._show_skull_toast(message)
 
     def _show_skull_toast(self, message: str) -> None:
@@ -1240,9 +1291,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if tooltip is None:
             tooltip = _FloatingTooltip()
             self._skull_toast = tooltip
-        point = self._skull_btn.mapToGlobal(QPoint(0, self._skull_btn.height() + 4))
-        tooltip.show_message(message, point.x() - 60, point.y())
-        QTimer.singleShot(2200, tooltip.hide)
+        anchor = self._skull_btn.mapToGlobal(
+            QPoint(self._skull_btn.width() // 2, self._skull_btn.height() + 6)
+        )
+        tooltip.show_static(message, anchor.x(), anchor.y())
+        QTimer.singleShot(1000, tooltip.hide)
 
     def _open_process_panel(self) -> None:
         panel = _RobloxProcessPanel(self.manager, self)
@@ -2220,7 +2273,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._mr_dl_btn = QPushButton("Download Handle64")
         self._mr_dl_btn.setToolTip(
             "Downloads handle64.exe from Sysinternals (Microsoft)\n"
-            "and saves it to the AccountManagerData folder."
+            "and saves it to the XGRSManagerData folder."
         )
         self._mr_dl_btn.setFixedHeight(24)
         self._mr_dl_btn.setStyleSheet(
@@ -2589,6 +2642,23 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._refresh_vector_icons()
         self._refresh_theme_inputs(palette)
         self._refresh_theme_preset_buttons()
+        QTimer.singleShot(0, self._rebuild_themed_pages)
+
+    def _rebuild_themed_pages(self) -> None:
+        current = self._page_stack.currentIndex()
+        for index in sorted(self._lazy_page_builders):
+            if index not in self._built_pages:
+                continue
+            widget = self._page_stack.widget(index)
+            if widget is None:
+                continue
+            self._page_stack.removeWidget(widget)
+            widget.deleteLater()
+            self._page_stack.insertWidget(index, QWidget())
+            self._built_pages.discard(index)
+        self._settings_entry_cache = {}
+        self._show_page(current)
+        self._refresh_vector_icons()
 
     def _refresh_vector_icons(self) -> None:
         size = self._NAV_ICON_SIZE
@@ -2654,7 +2724,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
     # Settings search
     def _build_settings_search_bar(self) -> QWidget:
         bar = QWidget()
-        bar.setStyleSheet(f"background: {BG}; border-bottom: 1px solid {LINE};")
+        bar.setObjectName("settingsSearchBar")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 8, 16, 8)
         lay.setSpacing(6)
@@ -2663,25 +2733,17 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         icon_lbl.setPixmap(
             icons_mod.get_icon("search", MUTED, 13).pixmap(QSize(13, 13))
         )
-        icon_lbl.setStyleSheet("border: none;")
         lay.addWidget(icon_lbl)
 
         self._settings_search = QLineEdit()
         self._settings_search.setPlaceholderText("Search settings...")
         self._settings_search.setClearButtonEnabled(True)
-        self._settings_search.setStyleSheet(
-            f"QLineEdit {{ background: {INPUT}; border: 1px solid {LINE};"
-            f" color: {TEXT}; padding: 3px 6px; font-size: 11px;"
-            f" border-radius: 4px; }}"
-            f"QLineEdit:focus {{ border: 1px solid {FG_ACCENT}; }}"
-        )
+        self._settings_search.setObjectName("settingsSearchField")
         self._settings_search.textChanged.connect(self._on_settings_search)
         lay.addWidget(self._settings_search, 1)
 
         self._settings_search_status = QLabel("")
-        self._settings_search_status.setStyleSheet(
-            f"color: {MUTED}; font-size: 9px; border: none;"
-        )
+        self._settings_search_status.setObjectName("settingsSearchStatus")
         lay.addWidget(self._settings_search_status)
         return bar
 
@@ -2829,9 +2891,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         # Left category list
         cat_panel = QFrame()
         cat_panel.setFixedWidth(126)
-        cat_panel.setStyleSheet(
-            f"QFrame {{ background: {BG}; border-right: 1px solid {LINE}; }}"
-        )
+        cat_panel.setObjectName("settingsCatPanel")
         cat_lay = QVBoxLayout(cat_panel)
         cat_lay.setContentsMargins(6, 10, 6, 10)
         cat_lay.setSpacing(3)
@@ -2921,11 +2981,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         def _sec(title: str) -> QLabel:
             lbl = QLabel(title)
+            lbl.setObjectName("settingsSection")
             lbl.setProperty("settingsSection", True)
-            lbl.setStyleSheet(
-                f"color: {MUTED}; font-size: 9px; font-weight: 700; "
-                f"letter-spacing: 0.5px; margin-top: 8px;"
-            )
             return lbl
 
         def _sub_indent(widget, px=18):

@@ -20,6 +20,7 @@ dist/
 
 # Account data (SENSITIVE - DO NOT COMMIT!)
 saved_accounts.json
+XGRSManagerData/
 AccountManagerData/
 avatar_cache/
 auto_rejoin.json

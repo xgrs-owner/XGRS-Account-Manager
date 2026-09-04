@@ -68,7 +68,7 @@ Google Chrome.
 
 ## Data and privacy
 
-Everything is stored locally in `AccountManagerData` next to the executable.
+Everything is stored locally in `XGRSManagerData` next to the executable.
 Cookies are encrypted with a hardware key or a password of your choice. There is
 no telemetry and no analytics. Network traffic goes only to Roblox APIs, GitHub
 (update check) and a Discord webhook if you enable one.
