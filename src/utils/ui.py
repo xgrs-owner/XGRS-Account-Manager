@@ -64,6 +64,7 @@ import features.auto_connect as ac
 import features.auto_rejoin as ar
 import features.avatars as avatars
 import features.cookie_validator as cookie_validator_mod
+import features.browsers as browsers_mod
 import features.chromium as chromium_mod
 import features.diagnostics as diagnostics
 import features.favorites as favorites_mod
@@ -1093,6 +1094,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             }}
             QListWidget::item {{ height: 22px; padding-left: 6px; }}
             QListWidget::item:selected {{ background: {SELECT}; color: {TEXT}; }}
+            QListWidget::item:disabled {{ background: transparent; }}
+            QFrame#acActionPanel QPushButton {{ min-height: 22px; }}
 
             QLabel#accountName {{ color: {TEXT};  font-size: 11px; }}
             QLabel#noteSep {{ color: #7A7A7A; font-size: 11px; }}
@@ -3929,33 +3932,90 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         f.addWidget(_sec("BROWSER ENGINE"))
         _br_lbl = QLabel(
-            "Supported browsers: Chrome, Firefox, Edge, and built-in Chromium. "
-            "Brave and Opera GX users should select Chromium."
+            "The browser used to sign accounts in. Chromium based browsers reuse the "
+            "Chrome driver, so a driver mismatch is possible after an update. If a "
+            "browser refuses to start, fall back to the built-in Chromium."
         )
-        _br_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+        _br_lbl.setObjectName("settingsHint")
         _br_lbl.setWordWrap(True)
         f.addWidget(_br_lbl)
 
         _cur_br = S.get("browser_type", "chrome")
         _br_grp = QButtonGroup(sa)
-        for br_key, br_label, br_tip in [
-            ("chrome", "Google Chrome",
-             "Use Google Chrome through Selenium. Google Chrome must be installed."),
-            ("firefox", "Mozilla Firefox",
-             "Use Mozilla Firefox through Selenium. Mozilla Firefox must be installed."),
-            ("edge", "Microsoft Edge",
-             "Use Microsoft Edge through Selenium. Microsoft Edge must be installed."),
-            ("chromium", "Chromium",
-             "Use the built-in Chromium and matching driver. Download it with the button below."),
-        ]:
+        _br_tips = {
+            "chrome": "Google Chrome must be installed.",
+            "firefox": "Mozilla Firefox must be installed.",
+            "edge": "Microsoft Edge must be installed.",
+            "brave": "Brave must be installed. Uses the Chrome driver.",
+            "opera_gx": "Opera GX must be installed. Uses the Chrome driver.",
+            "opera": "Opera must be installed. Uses the Chrome driver.",
+            "vivaldi": "Vivaldi must be installed. Uses the Chrome driver.",
+            "yandex": "Yandex Browser must be installed. Uses the Chrome driver.",
+            "chromium": "Portable Chromium with a matching driver. Download it below.",
+            "custom": "Any browser executable you choose below.",
+        }
+        for br_key, br_label in browsers_mod.get_supported_browsers():
             rb = QRadioButton(br_label)
             rb.setChecked(br_key == _cur_br)
-            rb.setToolTip(br_tip)
+            tip = _br_tips.get(br_key, "")
+            if br_key not in ("chromium", "custom"):
+                found = any(
+                    os.path.isfile(candidate)
+                    for candidate in browsers_mod._standard_paths(br_key)
+                )
+                tip += (
+                    "\nDetected on this machine." if found
+                    else "\nNot detected on this machine."
+                )
+            rb.setToolTip(tip)
             _br_grp.addButton(rb)
             rb.toggled.connect(
-                (lambda k: lambda checked: actions.save_ui_setting("browser_type", k) if checked else None)(br_key)
+                (lambda k: lambda checked:
+                 self._on_sett_browser_type(k) if checked else None)(br_key)
             )
             f.addWidget(rb)
+
+        custom_row = QHBoxLayout()
+        custom_row.setContentsMargins(20, 0, 0, 0)
+        custom_row.setSpacing(6)
+        self._sett_custom_browser_edit = QLineEdit()
+        self._sett_custom_browser_edit.setPlaceholderText("Path to the browser executable")
+        self._sett_custom_browser_edit.setMinimumWidth(90)
+        self._sett_custom_browser_edit.setText(S.get("custom_browser_path", ""))
+        self._sett_custom_browser_edit.editingFinished.connect(
+            lambda: actions.save_ui_setting(
+                "custom_browser_path", self._sett_custom_browser_edit.text().strip()
+            )
+        )
+        custom_row.addWidget(self._sett_custom_browser_edit, 1)
+
+        self._sett_custom_browser_btn = QPushButton("Browse")
+        self._sett_custom_browser_btn.setFixedWidth(64)
+        self._sett_custom_browser_btn.clicked.connect(self._on_sett_browse_custom_browser)
+        custom_row.addWidget(self._sett_custom_browser_btn)
+
+        self._sett_custom_browser_engine = QComboBox()
+        for engine_key, engine_label in (
+            ("chrome", "Chromium based"),
+            ("firefox", "Firefox based"),
+            ("edge", "Edge based"),
+        ):
+            self._sett_custom_browser_engine.addItem(engine_label, engine_key)
+        _saved_engine = S.get("custom_browser_engine", "chrome")
+        _engine_index = self._sett_custom_browser_engine.findData(_saved_engine)
+        self._sett_custom_browser_engine.setCurrentIndex(max(0, _engine_index))
+        self._sett_custom_browser_engine.setToolTip(
+            "Which driver to use for the chosen executable."
+        )
+        self._sett_custom_browser_engine.currentIndexChanged.connect(
+            lambda _index: actions.save_ui_setting(
+                "custom_browser_engine",
+                self._sett_custom_browser_engine.currentData(),
+            )
+        )
+        custom_row.addWidget(self._sett_custom_browser_engine)
+        f.addLayout(custom_row)
+        self._update_custom_browser_row(_cur_br)
 
         _chromium_installed = bool(chromium_mod.validate_chromium())
         self._sett_chromium_btn = QPushButton(
@@ -6174,6 +6234,34 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ar_workers.clear()
         self._ar_refresh_list()
 
+    def _on_sett_browser_type(self, browser_key: str) -> None:
+        actions.save_ui_setting("browser_type", browser_key)
+        self._update_custom_browser_row(browser_key)
+
+    def _update_custom_browser_row(self, browser_key: str) -> None:
+        enabled = browser_key == "custom"
+        for widget in (
+            getattr(self, "_sett_custom_browser_edit", None),
+            getattr(self, "_sett_custom_browser_btn", None),
+            getattr(self, "_sett_custom_browser_engine", None),
+        ):
+            if widget is not None:
+                widget.setEnabled(enabled)
+
+    def _on_sett_browse_custom_browser(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Browser Executable", "", "Executables (*.exe);;All files (*)",
+        )
+        if not path:
+            return
+        self._sett_custom_browser_edit.setText(path)
+        actions.save_ui_setting("custom_browser_path", path)
+        engine = browsers_mod.infer_engine_from_path(path)
+        index = self._sett_custom_browser_engine.findData(engine)
+        if index >= 0:
+            self._sett_custom_browser_engine.setCurrentIndex(index)
+        actions.save_ui_setting("custom_browser_engine", engine)
+
     def _on_sett_auto_connect_interval(self, value: int) -> None:
         self._sett_ac_interval_label.setText(f"{value} s")
         actions.save_ui_setting("auto_connect_interval", int(value))
@@ -6328,13 +6416,16 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 "arrow": arrow,
             }
 
+            action_widget = self._ac_build_action_row(account)
             action_item = QListWidgetItem("")
-            action_item.setSizeHint(QSize(0, 28))
+            action_item.setSizeHint(
+                QSize(0, max(32, action_widget.sizeHint().height()))
+            )
             action_item.setData(Qt.ItemDataRole.UserRole, account)
             action_item.setData(Qt.ItemDataRole.UserRole + 1, "actions")
-            action_item.setFlags(action_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            action_item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._ac_list.addItem(action_item)
-            self._ac_list.setItemWidget(action_item, self._ac_build_action_row(account))
+            self._ac_list.setItemWidget(action_item, action_widget)
             action_item.setHidden(account not in self._ac_expanded)
 
         if current:
@@ -6347,12 +6438,14 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
     def _ac_build_action_row(self, account: str) -> QWidget:
         widget = QWidget()
+        widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(20, 0, 6, 3)
+        outer.setContentsMargins(20, 0, 6, 4)
         outer.setSpacing(0)
 
         panel = QFrame()
         panel.setObjectName("acActionPanel")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         panel.setStyleSheet(f"""
             QFrame#acActionPanel {{
                 background: {PANEL};
@@ -6367,14 +6460,14 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         outer.addWidget(panel)
 
         layout = QHBoxLayout(panel)
-        layout.setContentsMargins(8, 3, 8, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(5)
 
         style = (
             f"QPushButton {{ background: {INPUT}; border: 1px solid {LINE};"
-            f" color: {TEXT}; font-size: 10px; padding: 2px 10px;"
-            f" border-radius: 3px; min-height: 20px; }}"
-            f"QPushButton:hover {{ background: {SELECT}; }}"
+            f" color: {TEXT}; font-size: 10px; padding: 0px 10px;"
+            f" border-radius: 3px; min-height: 22px; max-height: 22px; }}"
+            f"QPushButton:hover {{ background: {SELECT}; border: 1px solid {FG_ACCENT}; }}"
         )
         danger_style = style + (
             f"QPushButton:hover {{ background: #5A2A2A; color: #FFFFFF; }}"
@@ -7075,7 +7168,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             discord_btn.setIcon(QIcon(_dpix))
             discord_btn.setIconSize(QSize(16, 16))
         discord_btn.clicked.connect(
-            lambda: webbrowser.open("https://discord.gg/SZaZU8zwZA")
+            lambda: webbrowser.open("https://ds.xgrs.lol")
         )
         recent_header.addWidget(discord_btn)
 

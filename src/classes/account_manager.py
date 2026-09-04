@@ -377,6 +377,13 @@ class RobloxAccountManager:
 
         browser_key = str(self._browser_value(browser, "key", "chrome")).lower()
         browser_label = self._browser_value(browser, "label", browser_key)
+        engine = str(
+            self._browser_value(browser, "driver_type", "") or ""
+        ).lower()
+        if engine not in ("chrome", "firefox", "edge"):
+            engine = "firefox" if browser_key == "firefox" else (
+                "edge" if browser_key == "edge" else "chrome"
+            )
         executable_path = self._browser_value(browser, "executable_path", "")
         driver_path = self._browser_value(browser, "driver_path", "")
         bundled = bool(self._browser_value(browser, "bundled", False))
@@ -399,7 +406,7 @@ class RobloxAccountManager:
             )
 
         try:
-            if browser_key == "firefox":
+            if engine == "firefox":
                 from selenium.webdriver.firefox.options import Options
 
                 options = Options()
@@ -409,7 +416,7 @@ class RobloxAccountManager:
                 options.add_argument(profile_dir)
                 options.set_preference("dom.webdriver.enabled", False)
                 options.set_preference("useAutomationExtension", False)
-            elif browser_key in ("chrome", "chromium"):
+            elif engine == "chrome":
                 from selenium.webdriver.chrome.options import Options
 
                 options = Options()
@@ -441,7 +448,7 @@ class RobloxAccountManager:
                 options.add_argument("--disable-component-update")
                 options.add_argument("--disable-background-networking")
                 options.add_argument("--aggressive-cache-discard")
-            elif browser_key == "edge":
+            elif engine == "edge":
                 from selenium.webdriver.edge.options import Options
 
                 options = Options()
@@ -457,14 +464,14 @@ class RobloxAccountManager:
                 return OperationResult.failure(
                     "BROWSER_SELECTION_INVALID",
                     "Invalid Browser Selection",
-                    "Select Chrome, Firefox, Edge, or Chromium in Browser Engine settings.",
+                    "Choose a browser in Settings -> Misc -> Browser Engine.",
                     detail=f"Configured browser: {browser_key}",
                 )
 
             with self._browser_setup_lock:
-                if browser_key == "firefox":
+                if engine == "firefox":
                     driver = webdriver.Firefox(options=options)
-                elif browser_key == "edge":
+                elif engine == "edge":
                     driver = webdriver.Edge(options=options)
                 elif bundled:
                     if not driver_path or not os.path.isfile(driver_path):
@@ -487,7 +494,7 @@ class RobloxAccountManager:
             driver._ram_profile_dir = profile_dir
             driver.set_page_load_timeout(120)
             driver.implicitly_wait(10)
-            if browser_key != "firefox":
+            if engine != "firefox":
                 driver.execute_script(
                     "Object.defineProperty(navigator, 'webdriver', "
                     "{get: () => undefined})"

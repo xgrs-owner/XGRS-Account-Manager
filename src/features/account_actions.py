@@ -836,8 +836,11 @@ def import_user_pass(manager, pairs: list[tuple[str, str]], on_done: Callable[[b
 
 def get_browser_result() -> OperationResult:
     S = load_ui_settings()
-    browser_type = S.get("browser_type", "chrome")
-    return browsers_mod.resolve_browser(browser_type)
+    return browsers_mod.resolve_browser(
+        S.get("browser_type", "chrome"),
+        custom_path=S.get("custom_browser_path", ""),
+        custom_engine=S.get("custom_browser_engine", ""),
+    )
 
 
 def add_account_browser(manager, on_done: Callable[[bool, str], None] = lambda *_: None, javascript: str = "") -> None:

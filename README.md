@@ -45,6 +45,11 @@ Searchable, grouped into General, Roblox, Discord, Misc, Themes and Developer.
 Includes a Roblox downloader, RAM trimming, Discord webhook alerts, a WebSocket
 API and a slider for how often Auto Connect refreshes its status.
 
+**Browser engine**
+Sign in through Chrome, Firefox, Edge, Brave, Opera GX, Opera, Vivaldi, Yandex,
+the built-in portable Chromium, or any executable you point at with Custom
+Browser.
+
 **Interface**
 The main window is resizable and remembers its size. Dialogs carry their own
 icons and window controls, and the Auto Connect editor switches between one and
