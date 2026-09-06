@@ -874,7 +874,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._window_renamer: window_renamer_mod.RobloxWindowRenamer | None = None
 
         self._window_resizer = window_resizer_mod.RobloxWindowResizer(
-            actions.load_ui_settings
+            actions.load_ui_settings,
+            resolve_accounts=self._resolve_window_accounts,
         )
 
         # Cookie Validator
@@ -985,7 +986,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if S.get("rename_roblox_windows", False):
             self._start_rename_windows()
 
-        if S.get("roblox_window_resize_enabled", False):
+        if S.get("roblox_window_resize_enabled", False) or S.get(
+            "roblox_window_remember_position", False
+        ):
             self._window_resizer.start()
 
         if S.get("presence_indicator", False):
@@ -3357,7 +3360,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         for key, rb in self._sett_launcher_radios.items():
             rb.toggled.connect(_on_launcher_toggled(key))
 
-        f.addWidget(_sec("WINDOWS"))
+        f.addWidget(_sec("WINDOW"))
         self._sett_rename_chk = _chk(
             "rename_roblox_windows", "Rename Roblox to",
             "Set each Roblox window's title bar to the account username or saved note.",
@@ -3476,6 +3479,15 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         )
         f.addLayout(_sub_indent(self._sett_resize_borderless_chk))
 
+        self._sett_resize_unlock_chk = _chk(
+            "roblox_window_unlock_size", "Unlock resize (no minimum)",
+            "Roblox refuses to go below roughly 800x600 by clamping the size it is "
+            "given. This bypasses that clamp, so any size works, even 5x5.\n"
+            "The game may draw incorrectly at very small sizes.",
+            on_change=self._on_sett_roblox_resize_unlock,
+        )
+        f.addLayout(_sub_indent(self._sett_resize_unlock_chk))
+
         self._sett_resize_apply_btn = QPushButton("Apply To Open Windows")
         self._sett_resize_apply_btn.setToolTip(
             "Resize every Roblox window that is open right now."
@@ -3484,19 +3496,24 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         f.addLayout(_sub_indent(self._sett_resize_apply_btn))
         self._update_resize_controls()
 
-        self._sett_monitoring_chk = _chk(
-            "presence_indicator", "Account Activity Monitor",
-            "Show online status and local Roblox RAM and CPU usage.\n"
-            "Scans saved accounts every 5 seconds without using the Roblox API.",
-            on_change=self._on_sett_presence_indicator,
+        self._sett_remember_pos_chk = _chk(
+            "roblox_window_remember_position", "Remember window position per account",
+            "Store where each account's window sits and put it back there when the "
+            "client is launched again.\n"
+            "Auto Connect uses it too, so a client that crashed reopens in the same "
+            "place.",
+            on_change=self._on_sett_roblox_remember_position,
         )
-        f.addWidget(self._sett_monitoring_chk)
+        f.addWidget(self._sett_remember_pos_chk)
 
-        # Start scanner immediately if the setting is already on
-        if actions.load_ui_settings().get("presence_indicator", False):
-            self._start_presence_scanner()
+        self._sett_forget_pos_btn = QPushButton("Forget Saved Positions")
+        self._sett_forget_pos_btn.setToolTip(
+            "Drop every stored window position."
+        )
+        self._sett_forget_pos_btn.clicked.connect(self._on_sett_forget_positions)
+        f.addLayout(_sub_indent(self._sett_forget_pos_btn))
 
-        f.addWidget(_sec("WINDOW GRID"))
+        f.addWidget(_sec("WINDOW GRID KEYBIND"))
         self._sett_window_grid_chk = _chk(
             "window_grid_enabled", "Enable Window Grid Keybind",
             "Register a global keybind that arranges every visible Roblox window\n"
@@ -3542,16 +3559,29 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         window_grid_row.addWidget(self._sett_window_grid_key_btn)
         f.addLayout(window_grid_row)
 
-        f.addWidget(_sec("FIXES"))
-        self._sett_installer_fix_chk = _chk(
-            "roblox_installer_fix", "Roblox Installer Fix",
-            "Moves RobloxPlayerInstaller.exe out of each Roblox version folder\n"
-            "on launch to stop the installer popup, then restores it on exit.",
-            on_change=self._on_sett_installer_fix,
-        )
-        f.addWidget(self._sett_installer_fix_chk)
+        headless_hdr = QHBoxLayout()
+        headless_hdr.setContentsMargins(0, 0, 0, 0)
+        headless_hdr.addWidget(_sec("HEADLESS MANAGER"))
+        headless_hdr.addStretch(1)
+        f.addLayout(headless_hdr)
 
-        f.addWidget(_sec("RAM OPTIMIZATION"))
+        self._sett_headless_chk = _chk(
+            "headless_manager_enabled", "Enable Headless Manager",
+            "Lists every running Roblox process so you can hide or show\n"
+            "its window on demand.",
+            on_change=self._on_sett_headless_manager,
+        )
+        f.addWidget(self._sett_headless_chk)
+
+        self._headless_list = QListWidget()
+        self._headless_list.setFixedHeight(160)
+        self._headless_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._headless_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._headless_list.customContextMenuRequested.connect(self._headless_on_context_menu)
+        f.addWidget(self._headless_list)
+        self._refresh_headless_list([])
+
+        f.addWidget(_sec("PERFORMANCE"))
         self._sett_boost_ram_chk = _chk(
             "optimize_roblox_ram", "Boost Roblox RAM Limit (May Cause Crash)",
             "Periodically trim Roblox working-set memory to reduce RAM usage.\n"
@@ -3582,7 +3612,28 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         ram_row.addWidget(self._sett_ram_spin)
         f.addLayout(ram_row)
 
-        f.addWidget(_sec("ROBLOX DOWNLOADER"))
+        self._sett_monitoring_chk = _chk(
+            "presence_indicator", "Account Activity Monitor",
+            "Show online status and local Roblox RAM and CPU usage.\n"
+            "Scans saved accounts every 5 seconds without using the Roblox API.",
+            on_change=self._on_sett_presence_indicator,
+        )
+        f.addWidget(self._sett_monitoring_chk)
+
+        # Start scanner immediately if the setting is already on
+        if actions.load_ui_settings().get("presence_indicator", False):
+            self._start_presence_scanner()
+
+        f.addWidget(_sec("FIXES"))
+        self._sett_installer_fix_chk = _chk(
+            "roblox_installer_fix", "Roblox Installer Fix",
+            "Moves RobloxPlayerInstaller.exe out of each Roblox version folder\n"
+            "on launch to stop the installer popup, then restores it on exit.",
+            on_change=self._on_sett_installer_fix,
+        )
+        f.addWidget(self._sett_installer_fix_chk)
+
+        f.addWidget(_sec("INSTALL ROBLOX"))
         _roblox_downloader_desc = QLabel(
             "Download a Windows Roblox Player deployment directly from Roblox."
         )
@@ -3690,29 +3741,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         )
         f.addWidget(self._sett_roblox_downloader_btn)
 
-        headless_hdr = QHBoxLayout()
-        headless_hdr.setContentsMargins(0, 0, 0, 0)
-        headless_hdr.addWidget(_sec("HEADLESS MANAGER"))
-        headless_hdr.addStretch(1)
-        f.addLayout(headless_hdr)
-
-        self._sett_headless_chk = _chk(
-            "headless_manager_enabled", "Enable Headless Manager",
-            "Lists every running Roblox process so you can hide or show\n"
-            "its window on demand.",
-            on_change=self._on_sett_headless_manager,
-        )
-        f.addWidget(self._sett_headless_chk)
-
-        self._headless_list = QListWidget()
-        self._headless_list.setFixedHeight(160)
-        self._headless_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._headless_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._headless_list.customContextMenuRequested.connect(self._headless_on_context_menu)
-        f.addWidget(self._headless_list)
-        self._refresh_headless_list([])
-
-        f.addWidget(_sec("ROBLOX SETTINGS"))
+        f.addWidget(_sec("IN-GAME SETTINGS"))
         self._roblox_settings_config = roblox_settings_mod.get_customization_config(
             settings=S
         )
@@ -6454,26 +6483,70 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             self._sett_custom_browser_engine.setCurrentIndex(index)
         actions.save_ui_setting("custom_browser_engine", engine)
 
-    def _update_resize_controls(self) -> None:
-        enabled = bool(
-            actions.load_ui_settings().get("roblox_window_resize_enabled", False)
+    def _resolve_window_accounts(self) -> dict:
+        try:
+            return {
+                row["pid"]: row["account"]
+                for row in ac.list_roblox_processes(self.manager)
+                if row.get("account")
+            }
+        except Exception:
+            return {}
+
+    def _apply_resize_bounds(self, unlocked: bool) -> None:
+        width_box = getattr(self, "_sett_resize_width", None)
+        height_box = getattr(self, "_sett_resize_height", None)
+        if width_box is None or height_box is None:
+            return
+        width_box.setMinimum(
+            window_resizer_mod.UNLOCKED_MIN_WIDTH if unlocked
+            else window_resizer_mod.MIN_WIDTH
         )
+        height_box.setMinimum(
+            window_resizer_mod.UNLOCKED_MIN_HEIGHT if unlocked
+            else window_resizer_mod.MIN_HEIGHT
+        )
+
+    def _update_resize_controls(self) -> None:
+        settings = actions.load_ui_settings()
+        enabled = bool(settings.get("roblox_window_resize_enabled", False))
         for widget in (
             getattr(self, "_sett_resize_width", None),
             getattr(self, "_sett_resize_height", None),
             getattr(self, "_sett_resize_preset", None),
             getattr(self, "_sett_resize_center_chk", None),
             getattr(self, "_sett_resize_borderless_chk", None),
+            getattr(self, "_sett_resize_unlock_chk", None),
         ):
             if widget is not None:
                 widget.setEnabled(enabled)
+        self._apply_resize_bounds(
+            bool(settings.get("roblox_window_unlock_size", False))
+        )
+
+    def _on_sett_roblox_resize_unlock(self, unlocked: bool) -> None:
+        self._apply_resize_bounds(unlocked)
+        self._window_resizer.forget()
+
+    def _on_sett_roblox_remember_position(self, enabled: bool) -> None:
+        self._window_resizer.forget()
+        if enabled:
+            self._window_resizer.start()
+        elif not actions.load_ui_settings().get("roblox_window_resize_enabled", False):
+            self._window_resizer.stop()
+
+    def _on_sett_forget_positions(self) -> None:
+        self._window_resizer.clear_layouts()
+        _show_info(self, "Window Positions", "Saved window positions were cleared.")
 
     def _on_sett_roblox_resize(self, enabled: bool) -> None:
         self._update_resize_controls()
         if enabled:
             self._window_resizer.start()
             self._on_sett_roblox_resize_apply(quiet=True)
-        else:
+        elif not actions.load_ui_settings().get(
+            "roblox_window_remember_position", False
+        ):
             self._window_resizer.stop()
 
     def _on_sett_roblox_resize_value(self, key: str, value: int) -> None:
@@ -6499,6 +6572,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             settings.get("roblox_window_height", window_resizer_mod.DEFAULT_HEIGHT),
             center=bool(settings.get("roblox_window_center", True)),
             borderless=bool(settings.get("roblox_window_borderless", False)),
+            unlocked=bool(settings.get("roblox_window_unlock_size", False)),
         )
         self._window_resizer.forget()
         if quiet:

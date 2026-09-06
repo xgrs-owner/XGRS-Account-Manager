@@ -31,11 +31,13 @@ Runs several Roblox clients side by side, with a window grid hotkey and a headle
 mode that hides client windows. The tab explains what the Default and Handle64
 methods actually do and which one to pick.
 
-**Window size**
+**Window size and position**
 Settings has a Resizable Roblox Windows option: pick any width and height, center
-the window, or strip its frame for a borderless client. New clients are resized as
-soon as their window appears, so a client that Auto Connect relaunches comes back
-at the same size.
+the window, or strip its frame for a borderless client. Unlock resize bypasses the
+minimum Roblox enforces, so sizes below 800x600 work, down to a few pixels.
+Remember window position stores where each account's window sits and puts it back
+when the client starts again, so a client that Auto Connect relaunches reopens in
+the same place at the same size.
 
 **Kill switch**
 The skull in the title bar closes every Roblox process instantly on left click.
@@ -48,7 +50,9 @@ Light) plus a colour picker for every interface role, saved between runs and
 applied to every window and dialog without a restart.
 
 **Settings**
-Searchable, grouped into General, Roblox, Discord, Misc, Themes and Developer.
+Searchable, grouped into General, Roblox, Discord, Misc, Themes and Developer. The
+Roblox page is ordered by topic: Launcher, Window, Window Grid Keybind, Headless
+Manager, Performance, Fixes, Install Roblox and In-Game Settings.
 Includes a Roblox downloader, RAM trimming, Discord webhook alerts, a WebSocket
 API and a slider for how often Auto Connect refreshes its status.
 
