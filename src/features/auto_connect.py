@@ -84,6 +84,11 @@ _ERROR_TEXT_PATTERNS = (
 
 _LOG_TAIL_LIMIT = 512 * 1024  # never read more than this per scan
 
+_INTERNET_LOCK = threading.Lock()
+_INTERNET_CACHE = (0.0, False)
+_INTERNET_TTL = 15.0
+_ERROR_SCAN_INTERVAL = 2.5
+
 
 def load_configs() -> dict:
     """Read the persisted Auto Connect configuration (one entry per account)."""
@@ -150,14 +155,26 @@ def normalize_config(config: dict) -> dict:
 
 
 def has_internet(timeout: int = 3) -> bool:
+    global _INTERNET_CACHE
+    now = time.monotonic()
+    with _INTERNET_LOCK:
+        checked_at, reachable = _INTERNET_CACHE
+        if checked_at and now - checked_at < _INTERNET_TTL:
+            return reachable
+
+    result = False
     for url in ("https://www.google.com/generate_204",
                 "https://www.cloudflare.com/cdn-cgi/trace"):
         try:
             if requests.get(url, timeout=timeout).status_code < 500:
-                return True
+                result = True
+                break
         except requests.RequestException:
             pass
-    return False
+
+    with _INTERNET_LOCK:
+        _INTERNET_CACHE = (time.monotonic(), result)
+    return result
 
 
 # Roblox log inspection
@@ -401,6 +418,9 @@ def fetch_presence_batch(user_ids: list[str], cookie: str) -> dict[str, dict]:
     except (requests.RequestException, ValueError):
         return {}
 
+    if response.status_code == 403:
+        RobloxAPI.drop_csrf(cookie)
+        return {}
     if response.status_code != 200:
         return {}
 
@@ -574,6 +594,7 @@ class _AccountState:
         self.log_offset = 0
         self.log_pid: int | None = None
         self.running_since = 0.0
+        self.last_error_scan = 0.0
 
     def snapshot(self, now: float) -> dict:
         elapsed = max(0.0, now - self.state_since)
@@ -621,10 +642,11 @@ class AutoConnectSupervisor:
         self._probe_thread: threading.Thread | None = None
         self._pid_uid_cache: dict[int, tuple[float, str]] = {}
         self._cpu_count = max(1, psutil.cpu_count() or 1)
-        self._presence_interval = 20.0
+        self._presence_interval = max(5.0, min(20.0, self._interval * 4))
 
     def set_interval(self, seconds: float) -> None:
         self._interval = max(1.0, float(seconds))
+        self._presence_interval = max(5.0, min(20.0, self._interval * 4))
 
     # Lifecycle
 
@@ -925,7 +947,12 @@ class AutoConnectSupervisor:
         state.launching = False
         self._read_metrics(state, processes.get(pid))
 
-        if state.enabled and state.config.get("restart_on_error", True):
+        if (
+            state.enabled
+            and state.config.get("restart_on_error", True)
+            and now - state.last_error_scan >= _ERROR_SCAN_INTERVAL
+        ):
+            state.last_error_scan = now
             error = self._scan_errors(state)
             if error:
                 print(f"[Auto Connect] [{state.account}] {error} detected, restarting client.")

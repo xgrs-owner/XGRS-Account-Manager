@@ -31,6 +31,12 @@ Runs several Roblox clients side by side, with a window grid hotkey and a headle
 mode that hides client windows. The tab explains what the Default and Handle64
 methods actually do and which one to pick.
 
+**Window size**
+Settings has a Resizable Roblox Windows option: pick any width and height, center
+the window, or strip its frame for a borderless client. New clients are resized as
+soon as their window appears, so a client that Auto Connect relaunches comes back
+at the same size.
+
 **Kill switch**
 The skull in the title bar closes every Roblox process instantly on left click.
 Right click opens a resizable panel listing each process with its PID, account,

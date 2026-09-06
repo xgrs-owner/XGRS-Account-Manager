@@ -3,6 +3,7 @@ Roblox API interaction utilities
 Handles authentication, info, and game launching
 """
 
+import hashlib
 import os
 import re
 import time
@@ -21,6 +22,36 @@ class RobloxAPI:
     _rate_limiter_lock = threading.Lock()
     _last_request_time = None
     _min_interval = 6.0
+
+    _csrf_lock = threading.Lock()
+    _csrf_cache: dict[str, tuple[str, float]] = {}
+    _csrf_ttl = 900.0
+
+    @classmethod
+    def _csrf_key(cls, cookie):
+        return hashlib.sha256(str(cookie or "").encode("utf-8")).hexdigest()
+
+    @classmethod
+    def get_cached_csrf(cls, cookie):
+        key = cls._csrf_key(cookie)
+        with cls._csrf_lock:
+            entry = cls._csrf_cache.get(key)
+            if entry and time.time() - entry[1] < cls._csrf_ttl:
+                return entry[0]
+            cls._csrf_cache.pop(key, None)
+        return ""
+
+    @classmethod
+    def store_csrf(cls, cookie, token):
+        if not token:
+            return
+        with cls._csrf_lock:
+            cls._csrf_cache[cls._csrf_key(cookie)] = (token, time.time())
+
+    @classmethod
+    def drop_csrf(cls, cookie):
+        with cls._csrf_lock:
+            cls._csrf_cache.pop(cls._csrf_key(cookie), None)
     
     @classmethod
     def _wait_for_rate_limit(cls):
@@ -240,16 +271,23 @@ class RobloxAPI:
         return None
     
     @staticmethod
-    def get_csrf_token(cookie):
+    def get_csrf_token(cookie, use_cache=True):
         """Get CSRF token for authenticated requests"""
+        if use_cache:
+            cached = RobloxAPI.get_cached_csrf(cookie)
+            if cached:
+                return cached
+
         url = "https://auth.roblox.com/v2/logout"
         headers = {
             'Cookie': f'.ROBLOSECURITY={cookie}'
         }
-        
+
         try:
             response = requests.post(url, headers=headers, timeout=5)
-            return response.headers.get('x-csrf-token')
+            token = response.headers.get('x-csrf-token')
+            RobloxAPI.store_csrf(cookie, token)
+            return token
         except:
             return None
     
@@ -386,6 +424,15 @@ class RobloxAPI:
     @staticmethod
     def get_auth_ticket(roblosecurity_cookie):
         """Get authentication ticket for launching Roblox games"""
+        had_cached_token = bool(RobloxAPI.get_cached_csrf(roblosecurity_cookie))
+        result = RobloxAPI._request_auth_ticket(roblosecurity_cookie, True)
+        if result or not had_cached_token or result.code != "COOKIE_INVALID":
+            return result
+        RobloxAPI.drop_csrf(roblosecurity_cookie)
+        return RobloxAPI._request_auth_ticket(roblosecurity_cookie, False)
+
+    @staticmethod
+    def _request_auth_ticket(roblosecurity_cookie, use_cache):
         if not str(roblosecurity_cookie or "").strip():
             return OperationResult.failure(
                 "COOKIE_MISSING",
@@ -403,8 +450,10 @@ class RobloxAPI:
         }
 
         try:
-            csrf_token = ""
-            for attempt in range(4):
+            csrf_token = (
+                RobloxAPI.get_cached_csrf(roblosecurity_cookie) if use_cache else ""
+            )
+            for attempt in range(0 if csrf_token else 4):
                 response = requests.post(url, headers=headers, timeout=8)
                 if response.status_code == 403 and response.headers.get("x-csrf-token"):
                     csrf_token = response.headers["x-csrf-token"]
@@ -445,6 +494,7 @@ class RobloxAPI:
                     retryable=True,
                 )
 
+            RobloxAPI.store_csrf(roblosecurity_cookie, csrf_token)
             headers["X-CSRF-TOKEN"] = csrf_token
             for attempt in range(4):
                 response = requests.post(url, headers=headers, timeout=8)

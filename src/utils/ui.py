@@ -79,6 +79,7 @@ import features.webhook as webhook
 import features.websocket_server as ws_mod
 import features.window_grid as window_grid_mod
 import features.window_renamer as window_renamer_mod
+import features.window_resizer as window_resizer_mod
 import features.windows_startup as windows_startup_mod
 from utils import icons as icons_mod
 
@@ -872,6 +873,10 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         # Roblox Window Renamer
         self._window_renamer: window_renamer_mod.RobloxWindowRenamer | None = None
 
+        self._window_resizer = window_resizer_mod.RobloxWindowResizer(
+            actions.load_ui_settings
+        )
+
         # Cookie Validator
         self._cv_mod = cookie_validator_mod
         self._cv_validator = None
@@ -898,7 +903,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_supervisor = ac.AutoConnectSupervisor(
             self.manager,
             on_update=lambda snapshot: self._bridge.auto_connect_update.emit(snapshot),
-            interval_sec=float(actions.load_ui_settings().get("auto_connect_interval", 4)),
+            interval_sec=float(actions.load_ui_settings().get("auto_connect_interval", 2)),
         )
         self._ac_supervisor.set_configs(self._ac_configs)
         self._headless_manager: headless_manager_mod.HeadlessManager | None = None
@@ -979,6 +984,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         if S.get("rename_roblox_windows", False):
             self._start_rename_windows()
+
+        if S.get("roblox_window_resize_enabled", False):
+            self._window_resizer.start()
 
         if S.get("presence_indicator", False):
             self._start_presence_scanner()
@@ -3383,6 +3391,99 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         f.addLayout(rename_mode_row)
         self._update_rename_mode_controls()
 
+        self._sett_resize_chk = _chk(
+            "roblox_window_resize_enabled", "Resizable Roblox Windows",
+            "Give every Roblox window the exact size set below.\n"
+            "New clients are resized as soon as their window appears, so a client "
+            "that Auto Connect relaunches comes back at the same size.",
+            on_change=self._on_sett_roblox_resize,
+        )
+        f.addWidget(self._sett_resize_chk)
+
+        resize_size_row = QHBoxLayout()
+        resize_size_row.setContentsMargins(20, 0, 0, 0)
+        resize_size_row.setSpacing(6)
+        resize_size_label = QLabel("Size:")
+        resize_size_label.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        resize_size_row.addWidget(resize_size_label)
+
+        self._sett_resize_width = QSpinBox()
+        self._sett_resize_width.setRange(
+            window_resizer_mod.MIN_WIDTH, window_resizer_mod.MAX_WIDTH
+        )
+        self._sett_resize_width.setValue(int(
+            S.get("roblox_window_width", window_resizer_mod.DEFAULT_WIDTH)
+            or window_resizer_mod.DEFAULT_WIDTH
+        ))
+        self._sett_resize_width.setSuffix(" px")
+        self._sett_resize_width.setFixedWidth(86)
+        self._sett_resize_width.setToolTip("Window width in pixels.")
+        self._sett_resize_width.valueChanged.connect(
+            lambda value: self._on_sett_roblox_resize_value("roblox_window_width", value)
+        )
+        resize_size_row.addWidget(self._sett_resize_width)
+
+        resize_times = QLabel("x")
+        resize_times.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        resize_size_row.addWidget(resize_times)
+
+        self._sett_resize_height = QSpinBox()
+        self._sett_resize_height.setRange(
+            window_resizer_mod.MIN_HEIGHT, window_resizer_mod.MAX_HEIGHT
+        )
+        self._sett_resize_height.setValue(int(
+            S.get("roblox_window_height", window_resizer_mod.DEFAULT_HEIGHT)
+            or window_resizer_mod.DEFAULT_HEIGHT
+        ))
+        self._sett_resize_height.setSuffix(" px")
+        self._sett_resize_height.setFixedWidth(86)
+        self._sett_resize_height.setToolTip("Window height in pixels.")
+        self._sett_resize_height.valueChanged.connect(
+            lambda value: self._on_sett_roblox_resize_value("roblox_window_height", value)
+        )
+        resize_size_row.addWidget(self._sett_resize_height)
+
+        self._sett_resize_preset = QComboBox()
+        self._sett_resize_preset.addItem("Presets", None)
+        for preset_width, preset_height in (
+            (640, 480), (800, 600), (1024, 768), (1280, 720),
+            (1600, 900), (1920, 1080),
+        ):
+            self._sett_resize_preset.addItem(
+                f"{preset_width} x {preset_height}", (preset_width, preset_height)
+            )
+        self._sett_resize_preset.setToolTip("Fill the size fields with a common resolution.")
+        self._sett_resize_preset.currentIndexChanged.connect(
+            self._on_sett_roblox_resize_preset
+        )
+        resize_size_row.addWidget(self._sett_resize_preset)
+        resize_size_row.addStretch(1)
+        f.addLayout(resize_size_row)
+
+        self._sett_resize_center_chk = _chk(
+            "roblox_window_center", "Center on the screen",
+            "Place every resized window in the middle of its monitor.\n"
+            "Turn this off to keep each window where it already is.",
+            default=True,
+            on_change=self._on_sett_roblox_resize_option,
+        )
+        f.addLayout(_sub_indent(self._sett_resize_center_chk))
+
+        self._sett_resize_borderless_chk = _chk(
+            "roblox_window_borderless", "Borderless window",
+            "Strip the title bar and the resize frame so the game fills the whole size.",
+            on_change=self._on_sett_roblox_resize_option,
+        )
+        f.addLayout(_sub_indent(self._sett_resize_borderless_chk))
+
+        self._sett_resize_apply_btn = QPushButton("Apply To Open Windows")
+        self._sett_resize_apply_btn.setToolTip(
+            "Resize every Roblox window that is open right now."
+        )
+        self._sett_resize_apply_btn.clicked.connect(self._on_sett_roblox_resize_apply)
+        f.addLayout(_sub_indent(self._sett_resize_apply_btn))
+        self._update_resize_controls()
+
         self._sett_monitoring_chk = _chk(
             "presence_indicator", "Account Activity Monitor",
             "Show online status and local Roblox RAM and CPU usage.\n"
@@ -3990,7 +4091,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._sett_ac_interval_slider = QSlider(Qt.Orientation.Horizontal)
         self._sett_ac_interval_slider.setRange(1, 15)
         self._sett_ac_interval_slider.setValue(
-            max(1, min(15, int(S.get("auto_connect_interval", 4) or 4)))
+            max(1, min(15, int(S.get("auto_connect_interval", 2) or 2)))
         )
         self._sett_ac_interval_slider.setFixedWidth(160)
         self._sett_ac_interval_slider.valueChanged.connect(
@@ -6353,6 +6454,60 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             self._sett_custom_browser_engine.setCurrentIndex(index)
         actions.save_ui_setting("custom_browser_engine", engine)
 
+    def _update_resize_controls(self) -> None:
+        enabled = bool(
+            actions.load_ui_settings().get("roblox_window_resize_enabled", False)
+        )
+        for widget in (
+            getattr(self, "_sett_resize_width", None),
+            getattr(self, "_sett_resize_height", None),
+            getattr(self, "_sett_resize_preset", None),
+            getattr(self, "_sett_resize_center_chk", None),
+            getattr(self, "_sett_resize_borderless_chk", None),
+        ):
+            if widget is not None:
+                widget.setEnabled(enabled)
+
+    def _on_sett_roblox_resize(self, enabled: bool) -> None:
+        self._update_resize_controls()
+        if enabled:
+            self._window_resizer.start()
+            self._on_sett_roblox_resize_apply(quiet=True)
+        else:
+            self._window_resizer.stop()
+
+    def _on_sett_roblox_resize_value(self, key: str, value: int) -> None:
+        actions.save_ui_setting(key, int(value))
+        self._window_resizer.forget()
+
+    def _on_sett_roblox_resize_option(self, _enabled: bool) -> None:
+        self._window_resizer.forget()
+
+    def _on_sett_roblox_resize_preset(self, index: int) -> None:
+        size = self._sett_resize_preset.itemData(index)
+        if not size:
+            return
+        width, height = size
+        self._sett_resize_width.setValue(width)
+        self._sett_resize_height.setValue(height)
+        self._sett_resize_preset.setCurrentIndex(0)
+
+    def _on_sett_roblox_resize_apply(self, quiet: bool = False) -> None:
+        settings = actions.load_ui_settings()
+        result = window_resizer_mod.apply_to_all(
+            settings.get("roblox_window_width", window_resizer_mod.DEFAULT_WIDTH),
+            settings.get("roblox_window_height", window_resizer_mod.DEFAULT_HEIGHT),
+            center=bool(settings.get("roblox_window_center", True)),
+            borderless=bool(settings.get("roblox_window_borderless", False)),
+        )
+        self._window_resizer.forget()
+        if quiet:
+            return
+        if result:
+            _show_info(self, "Roblox Windows", result.message)
+        else:
+            self._show_operation_error(result)
+
     def _on_sett_auto_connect_interval(self, value: int) -> None:
         self._sett_ac_interval_label.setText(f"{value} s")
         actions.save_ui_setting("auto_connect_interval", int(value))
@@ -7072,6 +7227,10 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         # Stop Roblox window renamer
         try:
             self._stop_rename_windows()
+        except Exception:
+            pass
+        try:
+            self._window_resizer.stop(join_timeout=1.0)
         except Exception:
             pass
         # Cleanup drag-drop filter
