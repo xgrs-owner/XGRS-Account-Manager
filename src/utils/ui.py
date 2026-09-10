@@ -1270,7 +1270,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 elif index == 5:
                     self._drain_console_queue()
         if index == 6:
-            self._ac_refresh_list()
+            self._ac_refresh_list_if_needed()
         self._page_stack.setCurrentIndex(index)
 
     # Title bar
@@ -2534,10 +2534,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.Yes:
+                    # kill_roblox already waits for the processes to be gone.
                     actions.kill_roblox()
-                    deadline = time.time() + 3.0
-                    while time.time() < deadline and actions.is_roblox_running():
-                        time.sleep(0.2)
                 else:
                     self._mr_enabled = False
                     self._mr_enabled_chk.blockSignals(True)
@@ -3482,7 +3480,9 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._sett_resize_unlock_chk = _chk(
             "roblox_window_unlock_size", "Unlock resize (no minimum)",
             "Roblox refuses to go below roughly 800x600 by clamping the size it is "
-            "given. This bypasses that clamp, so any size works, even 5x5.\n"
+            "given. This bypasses that clamp, so any size works, even 1x1.\n"
+            "The size is held while the client loads and put back after the window "
+            "is minimized and restored (Windows re-clamps it then).\n"
             "The game may draw incorrectly at very small sizes.",
             on_change=self._on_sett_roblox_resize_unlock,
         )
@@ -3498,8 +3498,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
         self._sett_remember_pos_chk = _chk(
             "roblox_window_remember_position", "Remember window position per account",
-            "Store where each account's window sits and put it back there when the "
-            "client is launched again.\n"
+            "Store where each account's window sits, on any monitor, and put it back "
+            "there as soon as a new client is matched to the account.\n"
             "Auto Connect uses it too, so a client that crashed reopens in the same "
             "place.",
             on_change=self._on_sett_roblox_remember_position,
@@ -5555,8 +5555,11 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if hasattr(self, "_ar_ingame_labels"):
             for username, (sep, ingame_lbl) in self._ar_ingame_labels.items():
                 is_in_game = username in self._online_usernames
-                ingame_lbl.setText("In Game" if is_in_game else "Not in Game")
-                ingame_lbl.setStyleSheet(f"color: {'#2ECC71' if is_in_game else MUTED}; font-size: 10px;")
+                self._set_text(ingame_lbl, "In Game" if is_in_game else "Not in Game")
+                self._set_style(
+                    ingame_lbl,
+                    f"color: {'#2ECC71' if is_in_game else MUTED}; font-size: 10px;",
+                )
         if hasattr(self, "_ar_ram_labels"):
             for username, (sep, ram_lbl) in self._ar_ram_labels.items():
                 metrics = self._activity_snapshot.get(username)
@@ -5578,11 +5581,8 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             print("[INFO] RAM boost started")
             while not self._ram_boost_stop:
                 try:
-                    limit_mb = int(actions.load_ui_settings().get("optimize_roblox_ram_limit_mb", 750))
-                    current_pids = set()
-                    for proc in psutil.process_iter(["pid", "name"]):
-                        if proc.info["name"] and proc.info["name"].lower() == "robloxplayerbeta.exe":
-                            current_pids.add(proc.info["pid"])
+                    limit_mb = int(actions.get_ui_setting("optimize_roblox_ram_limit_mb", 750))
+                    current_pids = set(presence_mod.get_roblox_processes())
                     for pid in current_pids:
                         try:
                             mem_mb = psutil.Process(pid).memory_info().rss / 1024 / 1024
@@ -6485,11 +6485,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
 
     def _resolve_window_accounts(self) -> dict:
         try:
-            return {
-                row["pid"]: row["account"]
-                for row in ac.list_roblox_processes(self.manager)
-                if row.get("account")
-            }
+            return ac.map_pids_to_accounts(self.manager)
         except Exception:
             return {}
 
@@ -6592,7 +6588,7 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         started = self._ac_supervisor.enable_auto_start_accounts()
         if started:
             print(f"[INFO] Auto Connect resumed {started} account(s).")
-            self._ac_refresh_list()
+            self._ac_refresh_list_if_needed()
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -6602,6 +6598,31 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         if total < 3600:
             return f"{total // 60}m {total % 60}s"
         return f"{total // 3600}h {(total % 3600) // 60}m"
+
+    def _ac_refresh_list_if_needed(self):
+        """
+        Opening the Auto Connect page used to rebuild every row; when the
+        monitored accounts have not changed, only the live values are updated.
+        """
+        if self._ac_list is None:
+            return
+        if (
+            self._ac_rows
+            and list(self._ac_rows) == list(self._ac_configs)
+            and self._ac_list.count() > 0
+        ):
+            if getattr(self, "_ac_summary_lbl", None) is not None:
+                enabled = sum(
+                    1 for account in self._ac_configs
+                    if self._ac_supervisor.is_account_enabled(account)
+                )
+                self._set_text(
+                    self._ac_summary_lbl,
+                    f"{enabled} active / {len(self._ac_configs)} monitored",
+                )
+            self._ac_apply_snapshot()
+            return
+        self._ac_refresh_list()
 
     def _ac_refresh_list(self):
         if self._ac_list is None:
@@ -6878,6 +6899,19 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         self._ac_snapshot = snapshot if isinstance(snapshot, dict) else {}
         self._ac_apply_snapshot()
 
+    @staticmethod
+    def _set_style(widget: QWidget, css: str) -> None:
+        """setStyleSheet only when the sheet changed: it re-polishes the widget."""
+        if widget.property("_appliedStyle") == css:
+            return
+        widget.setProperty("_appliedStyle", css)
+        widget.setStyleSheet(css)
+
+    @staticmethod
+    def _set_text(label: QLabel, text: str) -> None:
+        if label.text() != text:
+            label.setText(text)
+
     def _ac_apply_snapshot(self) -> None:
         if not self._ac_rows:
             return
@@ -6886,59 +6920,58 @@ class AccountManagerUIQt(QMainWindow): # Main Window
             if metrics:
                 self._ac_apply_metrics(widgets, metrics)
             else:
-                widgets["state"].setText("stopped")
-                widgets["state"].setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+                self._set_text(widgets["state"], "stopped")
+                self._set_style(widgets["state"], f"color: {MUTED}; font-size: 10px;")
                 widgets["dot"].setVisible(False)
-                widgets["pid"].setText("PID -")
+                self._set_text(widgets["pid"], "PID -")
 
     def _ac_apply_metrics(self, widgets: dict, metrics: dict) -> None:
+        # Runs for every row on every supervisor tick (down to 1 s), so
+        # nothing here touches a widget unless the value actually changed.
         state = str(metrics.get("state", ac.STATE_STOPPED))
         label, color = self._AC_STATE_STYLE.get(state, ("stopped", MUTED))
-        widgets["state"].setText(label)
-        widgets["state"].setStyleSheet(f"color: {color}; font-size: 10px;")
+        self._set_text(widgets["state"], label)
+        self._set_style(widgets["state"], f"color: {color}; font-size: 10px;")
 
         # Green dot only while the client is confirmed to be in a game
         in_game = bool(metrics.get("in_game"))
         dot = widgets["dot"]
-        dot.setStyleSheet(f"""
-            QLabel {{
-                background: {'#2ECC71' if in_game else color};
-                border-radius: 4px;
-                border: 1px solid {BG};
-            }}
-        """)
+        self._set_style(dot, (
+            "QLabel { background: " + ("#2ECC71" if in_game else color) + ";"
+            f" border-radius: 4px; border: 1px solid {BG}; }}"
+        ))
         dot.setVisible(state != ac.STATE_STOPPED)
 
         if state in (ac.STATE_CLOSED, ac.STATE_WAITING):
             closed_for = self._format_duration(metrics.get("closed_seconds", 0.0))
-            widgets["time"].setText(f"for {closed_for}")
+            self._set_text(widgets["time"], f"for {closed_for}")
         elif metrics.get("uptime_seconds"):
             uptime = self._format_duration(metrics.get("uptime_seconds", 0.0))
-            widgets["time"].setText(f"up {uptime}")
+            self._set_text(widgets["time"], f"up {uptime}")
         else:
-            widgets["time"].setText("")
+            self._set_text(widgets["time"], "")
 
         ram_mb = float(metrics.get("ram_mb", 0.0) or 0.0)
-        widgets["ram"].setText(f"RAM: {ram_mb:.0f} MB")
+        self._set_text(widgets["ram"], f"RAM: {ram_mb:.0f} MB")
 
         pid = metrics.get("pid")
-        widgets["pid"].setText(f"PID {pid}" if pid else "PID -")
+        self._set_text(widgets["pid"], f"PID {pid}" if pid else "PID -")
 
         ping_ms = metrics.get("ping_ms")
         if ping_ms is None:
-            widgets["ping"].setText("Ping: --")
-            widgets["ping"].setStyleSheet(f"color: {MUTED}; font-size: 10px;")
+            self._set_text(widgets["ping"], "Ping: --")
+            self._set_style(widgets["ping"], f"color: {MUTED}; font-size: 10px;")
         else:
             ping_color = (
                 "#4CAF50" if ping_ms < 80
                 else NOTE if ping_ms < 150
                 else "#EF5350"
             )
-            widgets["ping"].setText(f"Ping: {ping_ms:.0f} ms")
-            widgets["ping"].setStyleSheet(f"color: {ping_color}; font-size: 10px;")
-            widgets["ping"].setToolTip(
-                f"Measured against {metrics.get('ping_source') or 'Roblox'}"
-            )
+            self._set_text(widgets["ping"], f"Ping: {ping_ms:.0f} ms")
+            self._set_style(widgets["ping"], f"color: {ping_color}; font-size: 10px;")
+            ping_tip = f"Measured against {metrics.get('ping_source') or 'Roblox'}"
+            if widgets["ping"].toolTip() != ping_tip:
+                widgets["ping"].setToolTip(ping_tip)
 
         last_error = str(metrics.get("last_error") or "")
         restarts = int(metrics.get("restarts", 0) or 0)
@@ -7520,8 +7553,25 @@ class AccountManagerUIQt(QMainWindow): # Main Window
         lay.addStretch(1)
         return panel
 
+    _circular_pixmap_cache: dict[tuple[bytes, int], QPixmap] = {}
+
+    @classmethod
+    def _make_circular_pixmap(cls, data: bytes, size: int = avatars.AVATAR_SIZE) -> QPixmap: # Avatar helpers
+        # Decoding and clipping every avatar again on each list refresh adds
+        # up with many accounts; the same bytes always give the same pixmap.
+        cache_key = (hashlib.blake2b(data, digest_size=16).digest(), size)
+        cached = cls._circular_pixmap_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        pixmap = cls._render_circular_pixmap(data, size)
+        if not pixmap.isNull():
+            if len(cls._circular_pixmap_cache) > 1000:
+                cls._circular_pixmap_cache.clear()
+            cls._circular_pixmap_cache[cache_key] = pixmap
+        return pixmap
+
     @staticmethod
-    def _make_circular_pixmap(data: bytes, size: int = avatars.AVATAR_SIZE) -> QPixmap: # Avatar helpers
+    def _render_circular_pixmap(data: bytes, size: int) -> QPixmap:
         src = QPixmap()
         src.loadFromData(data)
         if src.isNull():
@@ -8235,12 +8285,16 @@ class AccountManagerUIQt(QMainWindow): # Main Window
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
+                removed = 0
                 for username in usernames:
                     ok, msg = actions.remove_account(self.manager, username)
                     if ok:
-                        self._refresh_account_list()
+                        removed += 1
                     else:
                         _show_error(self, "Error", msg)
+                if removed:
+                    # One rebuild for the whole batch, not one per account.
+                    self._refresh_account_list()
 
     # Join Place ID
     def _on_join_place(self):
@@ -10121,7 +10175,7 @@ class _RobloxProcessPanel(QDialog):
             for value, width in (
                 (str(row["pid"]), 52),
                 (row["name"], 132),
-                (row["account"] or "-", 96),
+                (row["account"] or ("tray" if row.get("is_tray") else "-"), 96),
                 (f"{row['ram_mb']:.0f} MB", 64),
                 (AccountManagerUIQt._format_duration(row["uptime_seconds"]), 0),
             ):

@@ -4,6 +4,7 @@ Resize, reposition and remember the geometry of Roblox client windows.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import threading
@@ -28,6 +29,16 @@ MAX_HEIGHT = 4320
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 
+# Roblox keeps adjusting its window for a while after it appears (it restores
+# its own last geometry once the client has loaded), so whatever the manager
+# applies is enforced for this long before the window is trusted.
+SETTLE_SECONDS = 25.0
+MAX_REAPPLIES = 15
+
+# SetWindowPos normally lets the window clamp the size through
+# WM_GETMINMAXINFO. Skipping WM_WINDOWPOSCHANGING bypasses that clamp, which
+# is how sizes below the Roblox minimum are reached. Windows re-clamps the
+# size when a minimized window is restored, so the resizer puts it back then.
 SWP_NOSENDCHANGING = getattr(win32con, "SWP_NOSENDCHANGING", 0x0400)
 
 _BORDER_STYLES = (
@@ -133,7 +144,7 @@ def get_roblox_windows() -> dict[int, int]:
                     continue
                 left, top, right, bottom = win32gui.GetWindowRect(hwnd)
                 area = max(0, right - left) * max(0, bottom - top)
-                if area > largest.get(pid, (0, 0))[0]:
+                if area > largest.get(pid, (-1, 0))[0]:
                     largest[pid] = (area, hwnd)
             except Exception:
                 continue
@@ -152,19 +163,24 @@ def get_window_box(hwnd: int) -> dict[str, int] | None:
     return {"x": left, "y": top, "width": width, "height": height}
 
 
-def _is_minimized_or_maximized(hwnd: int) -> bool:
+def _placement_state(hwnd: int) -> str:
+    """'minimized', 'maximized' or 'normal'."""
     try:
         placement = win32gui.GetWindowPlacement(hwnd)
     except Exception:
-        return False
+        return "normal"
     if not placement or len(placement) < 2:
-        return False
-    return placement[1] in (
-        win32con.SW_SHOWMINIMIZED,
-        win32con.SW_SHOWMAXIMIZED,
-        win32con.SW_MAXIMIZE,
-        win32con.SW_MINIMIZE,
-    )
+        return "normal"
+    show_state = placement[1]
+    if show_state in (win32con.SW_SHOWMINIMIZED, win32con.SW_MINIMIZE):
+        return "minimized"
+    if show_state in (win32con.SW_SHOWMAXIMIZED, win32con.SW_MAXIMIZE):
+        return "maximized"
+    return "normal"
+
+
+def _is_minimized_or_maximized(hwnd: int) -> bool:
+    return _placement_state(hwnd) != "normal"
 
 
 def _work_area_for(hwnd: int) -> tuple[int, int, int, int]:
@@ -204,10 +220,14 @@ def apply_to_window(
     position: tuple[int, int] | None = None,
     borderless: bool = False,
     unlocked: bool = False,
-) -> bool:
+) -> dict[str, int] | None:
+    """
+    Give the window this size (and position). Returns the box the window
+    actually ended up with, or None when Windows refused.
+    """
     width, height = clamp_size(width, height, unlocked)
     try:
-        if _is_minimized_or_maximized(hwnd):
+        if _placement_state(hwnd) != "normal":
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
         set_borderless(hwnd, borderless)
@@ -226,11 +246,28 @@ def apply_to_window(
         if unlocked:
             flags |= SWP_NOSENDCHANGING
 
+        if position is not None:
+            # Move first: landing on a monitor with a different DPI makes
+            # Roblox rescale itself, so the size is applied afterwards, on
+            # the destination monitor.
+            win32gui.SetWindowPos(hwnd, 0, x, y, 0, 0, flags | win32con.SWP_NOSIZE)
         win32gui.SetWindowPos(hwnd, 0, x, y, width, height, flags)
-        return True
+
+        box = get_window_box(hwnd)
+        if (
+            unlocked
+            and box is not None
+            and (box["width"], box["height"]) != (width, height)
+        ):
+            win32gui.SetWindowPos(
+                hwnd, 0, x, y, width, height,
+                flags | SWP_NOSENDCHANGING | win32con.SWP_FRAMECHANGED,
+            )
+            box = get_window_box(hwnd)
+        return box or {"x": x, "y": y, "width": width, "height": height}
     except Exception as exc:
         print(f"[Window Resizer] Could not resize window {hwnd}: {exc}")
-        return False
+        return None
 
 
 def apply_to_all(
@@ -252,6 +289,7 @@ def apply_to_all(
     resized = sum(
         1 for hwnd in windows.values()
         if apply_to_window(hwnd, width, height, center, position, borderless, unlocked)
+        is not None
     )
     if not resized:
         return OperationResult.failure(
@@ -271,11 +309,34 @@ def apply_to_all(
     )
 
 
+@dataclass
+class _Options:
+    resize: bool
+    remember: bool
+    width: int
+    height: int
+    center: bool
+    borderless: bool
+    unlocked: bool
+
+
+@dataclass
+class _TrackedWindow:
+    hwnd: int
+    account: str = ""
+    intended: dict[str, int] | None = None   # the box the manager asked for
+    achieved: dict[str, int] | None = None   # the box right after applying it
+    settle_until: float = 0.0
+    reapplies: int = 0
+    was_minimized: bool = False
+    layout_applied: bool = False             # a remembered layout was used
+
+
 class RobloxWindowResizer:
     """
-    Applies the configured size to Roblox windows as they appear and remembers
-    where each account's window was, so a client that Auto Connect relaunches
-    comes back at the same place and size.
+    Applies the configured size to Roblox windows as they appear, keeps it
+    there while the client finishes loading, and remembers where each
+    account's window was so a relaunched client comes back to the same place.
     """
 
     SAVE_INTERVAL = 10.0
@@ -291,7 +352,7 @@ class RobloxWindowResizer:
         self._interval = max(1.0, float(interval_sec))
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._handled: dict[int, int] = {}
+        self._tracked: dict[int, _TrackedWindow] = {}
         self._signature: tuple | None = None
         self._layouts = load_layouts()
         self._layouts_dirty = False
@@ -301,7 +362,7 @@ class RobloxWindowResizer:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._handled.clear()
+        self._tracked.clear()
         self._layouts = load_layouts()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="RobloxWindowResizer",
@@ -318,20 +379,23 @@ class RobloxWindowResizer:
         if thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=join_timeout)
         self._flush_layouts(force=True)
-        self._handled.clear()
+        self._tracked.clear()
         print("[Window Resizer] Stopped.")
 
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
     def forget(self) -> None:
-        self._handled.clear()
+        """Treat every window as new on the next scan (settings changed)."""
+        self._tracked.clear()
         self._signature = None
 
     def clear_layouts(self) -> None:
         self._layouts = {}
         self._layouts_dirty = False
         forget_layouts()
+        for tracked in self._tracked.values():
+            tracked.layout_applied = False
 
     def get_layouts(self) -> dict[str, dict[str, int]]:
         return {name: dict(box) for name, box in self._layouts.items()}
@@ -357,73 +421,206 @@ class RobloxWindowResizer:
                 break
         self._flush_layouts(force=True)
 
-    def _apply_once(self) -> None:
+    def _read_options(self) -> _Options | None:
         settings = self._get_settings() or {}
         resize_enabled = bool(settings.get("roblox_window_resize_enabled", False))
         remember_enabled = bool(settings.get("roblox_window_remember_position", False))
         if not resize_enabled and not remember_enabled:
-            return
-
+            return None
         unlocked = bool(settings.get("roblox_window_unlock_size", False))
         width, height = clamp_size(
             settings.get("roblox_window_width", DEFAULT_WIDTH),
             settings.get("roblox_window_height", DEFAULT_HEIGHT),
             unlocked,
         )
-        center = bool(settings.get("roblox_window_center", True))
-        borderless = bool(settings.get("roblox_window_borderless", False))
+        # Centering and the frame belong to the resize feature; with only
+        # "remember" on, windows stay where Roblox (or the layout) puts them.
+        return _Options(
+            resize=resize_enabled,
+            remember=remember_enabled,
+            width=width,
+            height=height,
+            center=resize_enabled and bool(settings.get("roblox_window_center", True)),
+            borderless=resize_enabled and bool(settings.get("roblox_window_borderless", False)),
+            unlocked=unlocked,
+        )
 
-        signature = (resize_enabled, remember_enabled, width, height, center, borderless, unlocked)
+    def _apply_once(self) -> None:
+        options = self._read_options()
+        if options is None:
+            self._tracked.clear()
+            return
+
+        signature = (
+            options.resize, options.remember, options.width, options.height,
+            options.center, options.borderless, options.unlocked,
+        )
         if signature != self._signature:
             self._signature = signature
-            self._handled.clear()
+            self._tracked.clear()
 
         windows = get_roblox_windows()
-        for pid in list(self._handled):
-            if pid not in windows:
-                self._handled.pop(pid, None)
+        for pid in list(self._tracked):
+            if self._tracked[pid].hwnd != windows.get(pid):
+                self._tracked.pop(pid, None)
         if not windows:
             return
 
-        accounts = self._resolve_accounts() if remember_enabled else {}
+        accounts = self._resolve_accounts() if options.remember else {}
+        now = time.monotonic()
 
         for pid, hwnd in windows.items():
             account = accounts.get(pid, "")
-            if self._handled.get(pid) == hwnd:
-                if remember_enabled and account:
-                    self._record(account, hwnd)
+            tracked = self._tracked.get(pid)
+            if tracked is None:
+                tracked = _TrackedWindow(hwnd=hwnd, account=account)
+                self._tracked[pid] = tracked
+                self._apply_target(pid, tracked, options, now, "new window")
                 continue
 
-            saved = self._layouts.get(account) if (remember_enabled and account) else None
-            position = (saved["x"], saved["y"]) if saved else None
-            target_width, target_height = width, height
-            if not resize_enabled:
-                if saved:
-                    target_width, target_height = saved["width"], saved["height"]
-                else:
-                    box = get_window_box(hwnd)
-                    if box is None:
-                        continue
-                    target_width, target_height = box["width"], box["height"]
+            if account and account != tracked.account:
+                tracked.account = account
+                # The account is only known a few seconds after the window
+                # appears; its remembered spot is applied as soon as it is.
+                if (
+                    options.remember
+                    and account in self._layouts
+                    and not tracked.layout_applied
+                ):
+                    self._apply_target(pid, tracked, options, now, "account known")
+                    continue
 
-            if apply_to_window(
-                hwnd, target_width, target_height,
-                center=center and position is None,
-                position=position,
-                borderless=borderless,
-                unlocked=unlocked,
-            ):
-                self._handled[pid] = hwnd
-                if remember_enabled and account:
-                    self._record(account, hwnd)
+            state = _placement_state(hwnd)
+            if state == "minimized":
+                tracked.was_minimized = True
+                continue
+            if state == "maximized":
+                continue
 
-    def _record(self, account: str, hwnd: int) -> None:
-        if _is_minimized_or_maximized(hwnd):
+            box = get_window_box(hwnd)
+            if box is None:
+                continue
+
+            if tracked.was_minimized:
+                tracked.was_minimized = False
+                if tracked.intended and (
+                    (box["width"], box["height"])
+                    != (tracked.intended["width"], tracked.intended["height"])
+                ):
+                    self._reapply(pid, tracked, options, (box["x"], box["y"]), "restored")
+                continue
+
+            if now < tracked.settle_until:
+                if (
+                    tracked.intended
+                    and tracked.achieved
+                    and box != tracked.achieved
+                    and tracked.reapplies < MAX_REAPPLIES
+                ):
+                    tracked.reapplies += 1
+                    self._reapply(
+                        pid, tracked, options,
+                        (tracked.intended["x"], tracked.intended["y"]),
+                        "startup drift",
+                    )
+                continue
+
+            if options.remember and tracked.account:
+                self._record(tracked.account, box)
+
+    def _apply_target(
+        self,
+        pid: int,
+        tracked: _TrackedWindow,
+        options: _Options,
+        now: float,
+        reason: str,
+    ) -> None:
+        saved = (
+            self._layouts.get(tracked.account)
+            if options.remember and tracked.account else None
+        )
+        position = (saved["x"], saved["y"]) if saved else None
+        if options.resize:
+            width, height = options.width, options.height
+        elif saved:
+            width, height = saved["width"], saved["height"]
+        else:
+            # Only "remember" is on and nothing is stored yet: leave the
+            # window alone, but let it settle before its spot is recorded.
+            tracked.intended = None
+            tracked.achieved = None
+            tracked.settle_until = now + SETTLE_SECONDS
             return
-        box = get_window_box(hwnd)
-        if box is None:
+
+        achieved = apply_to_window(
+            tracked.hwnd, width, height,
+            center=options.center and position is None,
+            position=position,
+            borderless=options.borderless,
+            unlocked=options.unlocked,
+        )
+        if achieved is None:
             return
+
+        x, y = position if position is not None else (achieved["x"], achieved["y"])
+        tracked.intended = {"x": x, "y": y, "width": width, "height": height}
+        tracked.achieved = achieved
+        tracked.settle_until = now + SETTLE_SECONDS
+        tracked.reapplies = 0
+        tracked.was_minimized = False
+        tracked.layout_applied = saved is not None
+        label = f" for {tracked.account}" if tracked.account else ""
+        source = " (remembered)" if saved else ""
+        print(
+            f"[Window Resizer] PID {pid}{label}: {reason}, "
+            f"{width}x{height} at ({x}, {y}){source}."
+        )
+        if (achieved["width"], achieved["height"]) != (width, height):
+            print(
+                f"[Window Resizer] PID {pid}: the window kept "
+                f"{achieved['width']}x{achieved['height']}"
+                + ("." if options.unlocked else "; enable Unlock resize for sizes below the Roblox minimum.")
+            )
+
+    def _reapply(
+        self,
+        pid: int,
+        tracked: _TrackedWindow,
+        options: _Options,
+        position: tuple[int, int],
+        reason: str,
+    ) -> None:
+        intended = tracked.intended
+        if not intended:
+            return
+        achieved = apply_to_window(
+            tracked.hwnd, intended["width"], intended["height"],
+            center=False,
+            position=position,
+            borderless=options.borderless,
+            unlocked=options.unlocked,
+        )
+        if achieved is None:
+            return
+        tracked.achieved = achieved
+        tracked.intended = {
+            "x": position[0], "y": position[1],
+            "width": intended["width"], "height": intended["height"],
+        }
+        if reason == "restored" or tracked.reapplies in (1, MAX_REAPPLIES):
+            suffix = (
+                f" ({tracked.reapplies}/{MAX_REAPPLIES})"
+                if reason != "restored" else ""
+            )
+            print(
+                f"[Window Resizer] PID {pid}: {reason}, put back "
+                f"{intended['width']}x{intended['height']} at "
+                f"({position[0]}, {position[1]}){suffix}."
+            )
+
+    def _record(self, account: str, box: dict[str, int]) -> None:
         if self._layouts.get(account) == box:
             return
-        self._layouts[account] = box
+        self._layouts[account] = dict(box)
         self._layouts_dirty = True

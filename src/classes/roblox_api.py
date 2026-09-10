@@ -27,6 +27,34 @@ class RobloxAPI:
     _csrf_cache: dict[str, tuple[str, float]] = {}
     _csrf_ttl = 900.0
 
+    # Game names and usernames practically never change; every feature used
+    # to fetch them again on its own.
+    _lookup_lock = threading.Lock()
+    _game_name_cache: dict[str, tuple[str | None, float]] = {}
+    _username_cache: dict[str, tuple[str | None, float]] = {}
+    _game_name_ttl = 6 * 3600.0
+    _username_ttl = 3600.0
+    _lookup_failure_ttl = 60.0
+
+    @classmethod
+    def _cached_lookup(cls, cache, key, ttl):
+        with cls._lookup_lock:
+            entry = cache.get(key)
+        if entry is None:
+            return False, None
+        value, stored_at = entry
+        max_age = ttl if value else cls._lookup_failure_ttl
+        if time.time() - stored_at > max_age:
+            return False, None
+        return True, value
+
+    @classmethod
+    def _store_lookup(cls, cache, key, value):
+        with cls._lookup_lock:
+            if len(cache) > 2000:
+                cache.clear()
+            cache[key] = (value, time.time())
+
     @classmethod
     def _csrf_key(cls, cookie):
         return hashlib.sha256(str(cookie or "").encode("utf-8")).hexdigest()
@@ -249,7 +277,17 @@ class RobloxAPI:
         """Fetch game name from Roblox API"""
         if not place_id or not place_id.isdigit():
             return None
-        
+        hit, cached = RobloxAPI._cached_lookup(
+            RobloxAPI._game_name_cache, str(place_id), RobloxAPI._game_name_ttl
+        )
+        if hit:
+            return cached
+        name = RobloxAPI._fetch_game_name(place_id)
+        RobloxAPI._store_lookup(RobloxAPI._game_name_cache, str(place_id), name)
+        return name
+
+    @staticmethod
+    def _fetch_game_name(place_id):
         try:
             place_url = f"https://apis.roblox.com/universes/v1/places/{place_id}/universe"
             place_response = requests.get(place_url, timeout=5)
@@ -358,19 +396,30 @@ class RobloxAPI:
     @staticmethod
     def get_username_from_user_id(user_id):
         """Get username from user ID using Roblox API"""
+        key = str(user_id or "")
+        if not key:
+            return None
+        hit, cached = RobloxAPI._cached_lookup(
+            RobloxAPI._username_cache, key, RobloxAPI._username_ttl
+        )
+        if hit:
+            return cached
+
+        username = None
         try:
             url = f"https://users.roblox.com/v1/users/{user_id}"
             response = requests.get(url, timeout=5)
-            
+
             if response.status_code == 200:
                 data = response.json()
-                return data.get('name', data.get('displayName', None))
+                username = data.get('name', data.get('displayName', None))
             else:
                 print(f"[WARNING] Failed to get username for user ID {user_id}: Status {response.status_code}")
         except Exception as e:
             print(f"[ERROR] Failed to get username for user ID {user_id}: {e}")
-        
-        return None
+
+        RobloxAPI._store_lookup(RobloxAPI._username_cache, key, username)
+        return username
     
     @staticmethod
     def get_player_presence(user_id, cookie):

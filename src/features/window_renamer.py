@@ -20,8 +20,9 @@ import features.presence as presence_mod
 
 _LOG_EARLY_TOLERANCE_SEC = 2.0
 _LOG_STARTUP_WINDOW_SEC = 60.0
+# Full 16-digit ids only: "BrowserTrackerIdRequest: ... V2" is not tracker "2".
 _TRACKER_PATTERN = re.compile(
-    r"browsertrackerid[^0-9]{0,32}(\d+)",
+    r"browsertrackerid[^0-9]{0,32}(\d{15,20})",
     re.IGNORECASE,
 )
 _EVIDENCE_TIMESTAMP = 1

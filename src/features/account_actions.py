@@ -1237,7 +1237,9 @@ def _mr_h64_monitor_worker(
 
     while _mr_h64_session_active(stop_event, session_id):
         try:
-            process_snapshot = presence_mod.get_roblox_processes(force=True)
+            # The loop runs up to ~6x a second; a snapshot that is at most
+            # 0.2 s old is fresh enough and avoids a full process scan each time.
+            process_snapshot = presence_mod.get_roblox_processes(max_age=0.2)
             current = {
                 (pid, process_data[0])
                 for pid, process_data in process_snapshot.items()
@@ -1347,7 +1349,7 @@ def _mr_h64_query_handle(
 def _mr_h64_process_state(identity: tuple[int, float]) -> bool | None:
     pid, expected_create_time = identity
     try:
-        process_snapshot = presence_mod.get_roblox_processes(force=True)
+        process_snapshot = presence_mod.get_roblox_processes(max_age=0.2)
         process_data = process_snapshot.get(pid)
         if process_data is None:
             return False
@@ -1735,6 +1737,28 @@ def is_roblox_running() -> bool:
     return False
 
 
+def _kill_process_tree(process) -> str:
+    """Kill a process and its children; returns an error text or ''."""
+    try:
+        victims = []
+        try:
+            victims = list(process.children(recursive=True))
+        except Exception:
+            pass
+        victims.append(process)
+        for victim in victims:
+            try:
+                victim.kill()
+            except Exception as exc:
+                if type(exc).__name__ != "NoSuchProcess":
+                    raise
+        return ""
+    except Exception as exc:
+        if type(exc).__name__ == "NoSuchProcess":
+            return ""
+        return f"{type(exc).__name__}: {exc}"
+
+
 def kill_roblox() -> OperationResult:
     try:
         processes = presence_mod.get_roblox_processes(force=True)
@@ -1747,6 +1771,13 @@ def kill_roblox() -> OperationResult:
 
         failed: dict[int, str] = {}
         for pid in pids:
+            # Kill through the process handle first: spawning taskkill.exe
+            # for every client costs ~100 ms each and froze the UI with many
+            # clients open. taskkill stays as the fallback.
+            process = processes[pid][1]
+            error = _kill_process_tree(process)
+            if not error:
+                continue
             try:
                 result = subprocess.run(
                     ["taskkill", "/T", "/F", "/PID", str(pid)],
@@ -1759,7 +1790,7 @@ def kill_roblox() -> OperationResult:
                 )
                 if result.returncode != 0:
                     failed[pid] = (
-                        (result.stderr or result.stdout or "")
+                        (result.stderr or result.stdout or error)
                         .strip()[-300:]
                     )
             except Exception as exc:

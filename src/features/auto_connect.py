@@ -88,6 +88,13 @@ _INTERNET_LOCK = threading.Lock()
 _INTERNET_CACHE = (0.0, False)
 _INTERNET_TTL = 15.0
 _ERROR_SCAN_INTERVAL = 2.5
+# A client normally reports its user within ~10 s of starting. Until then a
+# launch is held back rather than risk opening a second client for the same
+# account.
+_UNIDENTIFIED_CLIENT_GRACE_SEC = 90.0
+# A bootstrapper that is still running after the launch grace keeps the
+# account in "launching" for at most this long.
+_LAUNCH_HARD_CAP_SEC = 300.0
 
 
 def load_configs() -> dict:
@@ -521,17 +528,41 @@ def close_all_roblox(include_bootstrapper: bool = True) -> int:
     return len(victims)
 
 
+def _uid_to_account_map(manager) -> dict[str, str]:
+    uid_to_name: dict[str, str] = {}
+    if manager is None:
+        return uid_to_name
+    accounts_lock = getattr(manager, "_accounts_lock", None)
+    if accounts_lock is not None:
+        with accounts_lock:
+            accounts = list(getattr(manager, "accounts", {}).items())
+    else:
+        accounts = list(getattr(manager, "accounts", {}).items())
+    for username, data in accounts:
+        if isinstance(data, dict):
+            user_id = str(data.get("user_id", "") or "")
+            if user_id and user_id != "0":
+                uid_to_name[user_id] = username
+    return uid_to_name
+
+
+def map_pids_to_accounts(manager) -> dict[int, str]:
+    """Saved account name for every Roblox client whose user is known."""
+    uid_to_name = _uid_to_account_map(manager)
+    if not uid_to_name:
+        return {}
+    return {
+        pid: uid_to_name[user_id]
+        for pid, user_id in presence_mod.resolve_pid_user_ids().items()
+        if user_id in uid_to_name
+    }
+
+
 def list_roblox_processes(manager=None) -> list[dict]:
     targets = ROBLOX_PROCESS_NAMES | BOOTSTRAPPER_NAMES | get_configured_launcher_names()
-    uid_to_name: dict[str, str] = {}
-    if manager is not None:
-        for username, data in list(getattr(manager, "accounts", {}).items()):
-            if isinstance(data, dict):
-                user_id = str(data.get("user_id", "") or "")
-                if user_id and user_id != "0":
-                    uid_to_name[user_id] = username
+    uid_to_name = _uid_to_account_map(manager)
+    pid_to_uid = presence_mod.resolve_pid_user_ids()
 
-    used_logs: set[str] = set()
     now = time.time()
     rows: list[dict] = []
     for process in psutil.process_iter(["pid", "name", "create_time"]):
@@ -551,9 +582,10 @@ def list_roblox_processes(manager=None) -> list[dict]:
 
         is_client = raw_name.lower() == "robloxplayerbeta.exe"
         account = ""
-        if is_client and uid_to_name:
-            user_id = presence_mod._get_user_id_from_pid(pid, used_logs)
-            account = uid_to_name.get(str(user_id or ""), "")
+        is_tray = False
+        if is_client:
+            account = uid_to_name.get(pid_to_uid.get(pid, ""), "")
+            is_tray = not account and presence_mod.is_tray_process(pid)
 
         rows.append({
             "pid": pid,
@@ -562,6 +594,7 @@ def list_roblox_processes(manager=None) -> list[dict]:
             "ram_mb": ram_mb,
             "uptime_seconds": max(0.0, now - created),
             "is_client": is_client,
+            "is_tray": is_tray,
         })
 
     rows.sort(key=lambda row: (not row["is_client"], row["pid"]))
@@ -595,6 +628,7 @@ class _AccountState:
         self.log_pid: int | None = None
         self.running_since = 0.0
         self.last_error_scan = 0.0
+        self.last_hold_notice = 0.0
 
     def snapshot(self, now: float) -> dict:
         elapsed = max(0.0, now - self.state_since)
@@ -863,25 +897,53 @@ class AutoConnectSupervisor:
 
     def _map_processes(self, processes: dict) -> dict[str, list[int]]:
         """Match every running Roblox client to the account that launched it."""
-        current_pids = set(processes)
+        resolved = presence_mod.resolve_pid_user_ids(processes)
         self._pid_uid_cache = {
-            pid: value for pid, value in self._pid_uid_cache.items()
-            if pid in current_pids and value[0] == processes[pid][0]
+            pid: (processes[pid][0], user_id)
+            for pid, user_id in resolved.items()
+            if user_id and pid in processes
         }
-
-        used_logs: set[str] = set()
-        for pid in sorted(current_pids):
-            if pid in self._pid_uid_cache:
-                continue
-            create_time = processes[pid][0]
-            user_id = presence_mod._get_user_id_from_pid(pid, used_logs)
-            if user_id:
-                self._pid_uid_cache[pid] = (create_time, user_id)
 
         uid_to_pids: dict[str, list[int]] = {}
         for pid, (_, user_id) in self._pid_uid_cache.items():
             uid_to_pids.setdefault(user_id, []).append(pid)
         return uid_to_pids
+
+    @staticmethod
+    def _unidentified_young_clients(now: float) -> list[int]:
+        """
+        Clients that have not written their user id yet. One of them may be
+        the client of an account that looks closed, so launching now could
+        open a second copy.
+        """
+        young: list[int] = []
+        for pid, (create_time, _) in presence_mod.get_roblox_processes().items():
+            if now - create_time > _UNIDENTIFIED_CLIENT_GRACE_SEC:
+                continue
+            identity = presence_mod.get_process_identity(pid)
+            if identity is None or (not identity["user_id"] and not identity["is_tray"]):
+                young.append(pid)
+        return young
+
+    @staticmethod
+    def _launcher_still_working(state: "_AccountState", now: float) -> bool:
+        """A bootstrapper started for this launch is still running (updating)."""
+        if now - state.launch_started > _LAUNCH_HARD_CAP_SEC:
+            return False
+        names = BOOTSTRAPPER_NAMES | get_configured_launcher_names()
+        if not names:
+            return False
+        for process in psutil.process_iter(["name", "create_time"]):
+            try:
+                name = (process.info.get("name") or "").lower()
+                if name not in names:
+                    continue
+                created = float(process.info.get("create_time") or 0.0)
+            except (psutil.Error, OSError, TypeError, ValueError):
+                continue
+            if created >= state.launch_started - 5.0:
+                return True
+        return False
 
     def _refresh_presence(self) -> None:
         """Ask Roblox whether each account is in a game, using its own cookie."""
@@ -1028,6 +1090,11 @@ class AutoConnectSupervisor:
             if now - state.launch_started < grace:
                 self._set_state(state, STATE_LAUNCHING, now)
                 return
+            if self._launcher_still_working(state, now):
+                # The bootstrapper is still busy (downloading an update, for
+                # example); launching again now would open two clients.
+                self._set_state(state, STATE_LAUNCHING, now)
+                return
             state.launching = False
 
         # STATE_ERROR is kept until the relaunch fires, so the row keeps showing
@@ -1041,6 +1108,19 @@ class AutoConnectSupervisor:
 
         delay = int(state.config.get("relaunch_delay", 10))
         if now - state.state_since < delay:
+            self._set_state(state, STATE_WAITING, now, keep_since=True)
+            return
+
+        young = self._unidentified_young_clients(now)
+        if young:
+            # A client that has not reported its user yet might already be
+            # this account's. Wait for it to identify itself first.
+            if now - state.last_hold_notice > 30.0:
+                state.last_hold_notice = now
+                print(
+                    f"[Auto Connect] [{state.account}] Holding the launch: "
+                    f"Roblox client(s) {young} have not identified their account yet."
+                )
             self._set_state(state, STATE_WAITING, now, keep_since=True)
             return
 

@@ -19,6 +19,10 @@ its client closes, crashes or hits a Roblox error (264, 266, 267, 268, 270, 277,
 accounts to start, stop or edit them together, or expand the arrow on a row for
 its own Start, Restart Client, Edit and Remove buttons. Stop All force-closes the
 clients and the bootstrapper, and cancels a launch that is still in flight.
+Clients are matched to accounts by the launch's browser tracker id, the log file
+the client holds open, and the log's own start time, and Roblox's background
+tray process (RobloxPlayerBeta.exe --launch-to-tray) is told apart from real
+clients, so an account that is already running is never launched twice.
 
 **Auto-Rejoin**
 Watches presence for a chosen Place ID and rejoins when the account leaves it.
@@ -34,10 +38,13 @@ methods actually do and which one to pick.
 **Window size and position**
 Settings has a Resizable Roblox Windows option: pick any width and height, center
 the window, or strip its frame for a borderless client. Unlock resize bypasses the
-minimum Roblox enforces, so sizes below 800x600 work, down to a few pixels.
-Remember window position stores where each account's window sits and puts it back
-when the client starts again, so a client that Auto Connect relaunches reopens in
-the same place at the same size.
+minimum Roblox enforces, so sizes below 800x600 work, down to 1x1. The size is
+held while the client finishes loading (Roblox re-applies its own geometry a few
+seconds in) and put back after a window is minimized and restored, which is when
+Windows re-clamps it. Remember window position stores where each account's window
+sits, on any monitor, and puts it back as soon as the new client is matched to its
+account, so a client that Auto Connect relaunches reopens in the same place at the
+same size.
 
 **Kill switch**
 The skull in the title bar closes every Roblox process instantly on left click.

@@ -107,7 +107,8 @@ def _identity_matches(
     processes: dict[int, tuple[float, psutil.Process]] | None = None,
 ) -> bool:
     if processes is None:
-        processes = _get_roblox_processes(force=True)
+        # Every worker polls this; the shared 0.4 s snapshot is fresh enough.
+        processes = _get_roblox_processes()
     pid, create_time = identity
     current = processes.get(pid)
     return bool(current and abs(current[0] - create_time) <= 0.01)
@@ -117,7 +118,7 @@ def _pid_alive(
     pid: int,
     create_time: float | None = None,
 ) -> bool:
-    processes = _get_roblox_processes(force=True)
+    processes = _get_roblox_processes()
     if create_time is None:
         return pid in processes
     return _identity_matches((pid, create_time), processes)
